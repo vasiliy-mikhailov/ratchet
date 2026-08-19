@@ -13,7 +13,7 @@ import java.util.List;
  * lambda that cannot throw is still an Agent; the signature only has to permit it.
  *
  * <p>IT STANDS ALONE BECAUSE IT SAYS NOTHING ABOUT THE WORK. It was nested inside a thousand-line
- * catalogue of one domain's prompts, so {@link Flow}, {@link Shape} and {@link Triad}, none of
+ * catalogue of one domain's prompts, so {@link Flow}, {@link Shape} and {@link Reply}, none of
  * which knows what that domain is, could not be read, moved or reused without the catalogue coming
  * with them. Three names and no domain: run something, say what to call it, say what it contains.
  */

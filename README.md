@@ -30,7 +30,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.1.0</version>
+  <version>0.3.0</version>
 </dependency>
 ```
 
@@ -43,8 +43,8 @@ moving target is how the thing this replaced became unusable.
 `tech.mikhailov.ratchet.flow` decides what runs next. `Agent` is one method, `String run(String)`,
 and everything is one: a model call, a sequence, a walk, a loop, plain code. `Flow` gives you
 sequence, selection and iteration over that one notion, plus `resumable`, which is the journal as a
-decorator. `Triad` is planner, doer, verifier with the loop held by the verifier rather than the
-producer. `Shape` walks the tree that runs, so a picture of the program cannot drift from it.
+decorator. `Flow.triad` is planner, doer, verifier with the loop held by the verifier rather than
+the producer. `Shape` walks the tree that runs, so a picture of the program cannot drift from it.
 `Reply` reads the one word a verifier settled on.
 
 `tech.mikhailov.ratchet.record` writes down what happened and reads it back. `Trace` is the one
@@ -69,8 +69,8 @@ nothing. `Recording` writes every tool call into the trace whole and returns it 
 An OpenAI-compatible endpoint in `RATCHET_BASE`, `RATCHET_MODEL` and `RATCHET_KEY`; a `JsonlTrace`;
 a map of tool specifications to executors that you write; `Recording.at` around it;
 `Model.forProducer` and `Model.forCritic`; an `Asking` per agent, wrapped in `Insisting`, with
-`Listening.register` called for each; then `Flow` and `Triad` to compose them and a `Journal` to
-make the whole thing resumable. About forty lines.
+`Listening.register` called for each; then `Flow` to compose them and a `Journal` to make the
+whole thing resumable. About forty lines.
 
 ## Three things that will catch you
 

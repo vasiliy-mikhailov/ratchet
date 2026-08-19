@@ -21,8 +21,8 @@ import dev.langchain4j.service.tool.ToolExecutor;
  * call, how many rounds it gets and who is told about the calls. The class this replaces was the
  * same handful of builder calls behind a jar, and everything else that jar carried -- a todo list,
  * skills, a memory file, an orchestrator that delegates to sub-agents -- is what
- * {@link tech.mikhailov.ratchet.flow.Triad} and the flow around it were built to stand in for. A
- * batteries-included harness assumes a model clever enough to choose its own trajectory; the
+ * {@link tech.mikhailov.ratchet.flow.Flow#triad} and the flow around it were built to stand in for.
+ * A batteries-included harness assumes a model clever enough to choose its own trajectory; the
  * structure in this library is what it substitutes for that assumption, so the parts that were
  * never used were never missing.
  *

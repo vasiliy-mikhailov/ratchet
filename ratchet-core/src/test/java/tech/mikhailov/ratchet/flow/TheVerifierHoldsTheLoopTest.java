@@ -157,7 +157,7 @@ class TheVerifierHoldsTheLoopTest {
             this.verdicts = verdicts;
         }
 
-        Triad triad(int rounds) {
+        Flow.Node triad(int rounds) {
             Agent planner = brief -> {
                 planned++;
                 if (planned > 1) {
@@ -165,7 +165,7 @@ class TheVerifierHoldsTheLoopTest {
                 }
                 return "PLAN-" + planned;
             };
-            Triad.Doer doer = (plan, feedback) -> {
+            Flow.Doer doer = (plan, feedback) -> {
                 did.add(new Run(plan, feedback));
                 return "DID " + plan;
             };
@@ -173,7 +173,7 @@ class TheVerifierHoldsTheLoopTest {
                 judged.add(brief);
                 return asked < verdicts.size() ? verdicts.get(asked++) : "done";
             };
-            return new Triad("test", planner, doer, verifier, () -> "FACTS", new Notes(notes),
+            return Flow.triad("test", planner, doer, verifier, () -> "FACTS", new Notes(notes),
                     "b", rounds);
         }
     }

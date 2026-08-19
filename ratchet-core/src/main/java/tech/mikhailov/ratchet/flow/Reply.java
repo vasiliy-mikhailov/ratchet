@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
  * THE WORD A REPLY SETTLES ON, WHICH IS THE ONLY CONTROL FLOW A MODEL HAS HERE.
  *
  * <p>Every verifier in this design answers with one of a closed set, and this is what reads it.
- * It lived on the class where the first caller happened to be, which meant {@link Triad} and
+ * It lived on the class where the first caller happened to be, which meant {@link Flow#triad} and
  * everything else that needed a verdict reached into a program class to parse a sentence. A parser
  * is not a program, and eight call sites across three classes is not a private helper.
  *

@@ -9,6 +9,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 import tech.mikhailov.ratchet.record.Journal;
+import tech.mikhailov.ratchet.record.Trace;
 
 /**
  * THE SHAPE IS THE PROGRAM, RATHER THAN A DESCRIPTION OF IT.
@@ -25,6 +26,11 @@ import tech.mikhailov.ratchet.record.Journal;
  * in order; a walk is one of them per item; plain code is one of them that calls no model. All the
  * same interface, so they compose, and the composition IS the shape. Nothing has to be kept in step
  * with it because there is nothing else.
+ *
+ * <p>THAT SENTENCE IS THE FILE NOW, rather than a claim about it. A triad was named in it as one of
+ * the five and shipped as a class next door, so the prose said combinator while the layout said the
+ * opposite: one fact in two places again, in the paragraph complaining about one fact in two
+ * places. {@link #triad} is a factory beside the rest and returns a {@link Node} like they do.
  *
  * <p>THIS IS SEQUENCE, SELECTION AND ITERATION, and that is the whole point. Structured programming
  * replaced the jump with three combinators over one notion of statement. These are three
@@ -44,6 +50,29 @@ public final class Flow {
     @FunctionalInterface
     public interface Step {
         String run(String task) throws IOException;
+    }
+
+    /** One execution of one plan. Not necessarily an agent: a doer may be a build, a script, or
+     *  any step that is not asked, only run. */
+    @FunctionalInterface
+    public interface Doer {
+        /**
+         * @param plan     what the planner settled on, unchanged across {@code again} rounds
+         * @param feedback the verifier's objection, empty on the first round
+         */
+        String run(String plan, String feedback) throws IOException;
+    }
+
+    /**
+     * What the workspace says once the doer has run.
+     *
+     * <p>Every verifier is handed this rather than left to ask. One corpus has a preparer answering
+     * NOTHING-TO-DO while its own stage recorded edits, and a troubleshooter reporting a fix it had
+     * reverted a turn earlier; a report is an opinion and the workspace is not.
+     */
+    @FunctionalInterface
+    public interface Facts {
+        String read() throws IOException;
     }
 
     /**
@@ -299,6 +328,192 @@ public final class Flow {
     }
 
     /**
+     * PLANNER, DOER, VERIFIER, AND THE VERIFIER HOLDS THE LOOP.
+     *
+     * <p>Every stage was a producer and a critic, with the loop written into the producer's side:
+     * the producer ran repeatedly and the critic was asked once, at the end. That put the two jobs
+     * in the wrong hands. Deciding what to do and deciding whether it worked are different
+     * questions, and the agent that chose a plan is the worst available judge of whether to keep
+     * running it.
+     *
+     * <p>It also hid a real defect for as long as it existed. One stage looped its producer and
+     * called a check between rounds, but the check answered about the wrong one of many subjects:
+     * it read every candidate at once and returned the first value it matched anywhere, so it
+     * reported on whichever the filesystem happened to walk first. Sixteen of the twenty-seven
+     * many-part subjects in that corpus carry the same thing at more than one value. The loop
+     * terminated reporting every check met, the critic saw only that end state and agreed, and
+     * nothing in the construction could have caught it. A verifier that runs every round, against
+     * one subject at a time, cannot make that mistake.
+     *
+     * <p>So the doer executes one plan once and has no opinion about repetition. The verifier reads
+     * what the workspace says afterwards and returns one of three words, which is the whole control
+     * flow:
+     *
+     * <ul>
+     *   <li>{@code done} closes the stage.
+     *   <li>{@code again} keeps the plan and re-runs the doer, which is told what the objection
+     *       was.
+     *   <li>{@code replan} throws the plan away and returns to the planner.
+     * </ul>
+     *
+     * <p>The two failure paths are separate on purpose. Collapsing them is how a loop spends its
+     * whole budget re-running a plan that was wrong from the first round, which is the shape of the
+     * sixteen gate turns one corpus spent watching a troubleshooter re-apply an edit its reviewer
+     * had already rejected.
+     *
+     * <p>Nesting is the same object: a doer may itself be a triad, and each level loops on its own
+     * verifier. The inner one closes first, so an outer verifier judges a finished piece of work
+     * rather than a half-run loop.
+     *
+     * <p>WHY THIS IS A FACTORY HERE AND NOT A CLASS OF ITS OWN. The paragraph at the top of this
+     * file names a triad as one of the five productions of the grammar, and for a while it was the
+     * one production that lived somewhere else: the prose said combinator, the file layout said
+     * otherwise, and that is one fact in two places, which is the defect the same paragraph is
+     * about. It returns a {@link Node} and composes exactly like the other six. Arity and meaning
+     * being fixed does not make it something else; the ternary operator is opinionated about both
+     * and is still an operator.
+     */
+    public static Node triad(String stage, Agent planner, Doer doer, Agent verifier, Facts facts,
+                             Trace trace, String key, int rounds) {
+        return new Triad(stage, planner, doer, verifier, facts, trace, key, rounds);
+    }
+
+    /**
+     * A NAMED CLASS RATHER THAN AN ANONYMOUS ONE, unlike the six factories above it. Those are a
+     * body and nothing else. This one holds seven collaborators, a loop with two exits and three
+     * helpers that are worth reading on their own, and hanging that off a {@code new Node(name) {}}
+     * would bury the factory it belongs to a hundred lines above its own closing brace. It is
+     * private, so what a caller can name is still only {@link #triad} and the {@link Node} it hands
+     * back.
+     */
+    private static final class Triad extends Node {
+
+        private final Agent planner;
+        private final Doer doer;
+        private final Agent verifier;
+        private final Facts facts;
+        private final Trace trace;
+        private final String key;
+        private final int rounds;
+
+        Triad(String stage, Agent planner, Doer doer, Agent verifier, Facts facts,
+                Trace trace, String key, int rounds) {
+            super(stage);
+            this.planner = planner;
+            this.doer = doer;
+            this.verifier = verifier;
+            this.facts = facts;
+            this.trace = trace;
+            this.key = key;
+            this.rounds = Math.max(1, rounds);
+        }
+
+        /**
+         * WHAT IT CONTAINS, so a triad can be drawn without anyone writing the drawing down twice.
+         *
+         * <p>The planner and the verifier are leaves here rather than named children: naming them
+         * would put three lines on a picture where the interesting fact is one, that this stage
+         * plans, does and verifies like every other. What is worth showing is what the DOER
+         * contains, which is where a sub-chain lives.
+         */
+        @Override
+        public List<Agent> inside() {
+            return doer instanceof Agent nested ? List.of(nested) : List.of();
+        }
+
+        /** What the stage ended up having done, which is the doer's last word. */
+        @Override
+        public String run(String brief) throws IOException {
+            String plan = planner.run(brief);
+            String feedback = "";
+            String did = "";
+            for (int round = 1; round <= rounds; round++) {
+                did = doer.run(plan, feedback);
+                String state = facts.read();
+                String judgement = verifier.run(brief
+                        + "\n\nThe plan this stage is working to:\n" + plan
+                        + "\n\nWhat your colleague reports doing:\n" + did
+                        + "\n\nWhat the workspace says now:\n" + state);
+                String verdict = verdictOf(judgement);
+                if (verdict.equals("done")) {
+                    trace.progress(key, name() + ": settled after " + round
+                            + (round == 1 ? " round" : " rounds"));
+                    return did;
+                }
+                if (round == rounds) {
+                    // The budget is spent, and saying so beats a verdict nobody reached.
+                    trace.progress(key, name() + ": " + rounds + " rounds spent, last word was "
+                            + verdict + " — " + because(judgement));
+                    return did;
+                }
+                trace.progress(key, name() + ": " + verdict + " — " + because(judgement));
+                if (verdict.equals("replan")) {
+                    plan = planner.run(brief
+                            + "\n\nYour previous plan:\n" + plan
+                            + "\n\nIt was carried out, and a reviewer sent the whole plan back:\n"
+                            + judgement
+                            + "\n\nWhat the workspace says now:\n" + state
+                            + "\n\nPlan again. The objection is to the plan, not to the execution,"
+                            + " so a plan that differs only in wording will come straight back.");
+                    feedback = "";
+                } else {
+                    feedback = "\n\nYou did this once already and a reviewer objected:\n"
+                            + judgement
+                            + "\n\nWhat the workspace says now:\n" + state
+                            + "\n\nThe plan stands. Address the objection.";
+                }
+            }
+            return did;
+        }
+
+        /**
+         * The verifier's word, with a blank reply read as {@code again} rather than as agreement.
+         *
+         * <p>{@link Reply#word} falls back to its first argument, and an empty reply is a live
+         * failure mode on a small local model rather than a hypothetical. Defaulting silence to
+         * {@code done} would close a stage because a request came back empty, which is the one
+         * reading of silence that loses work.
+         */
+        private static String verdictOf(String judgement) {
+            if (judgement == null || judgement.isBlank()) {
+                return "again";
+            }
+            return Reply.word(judgement, "done", "again", "replan");
+        }
+
+        /**
+         * THE FIRST LINE THAT SAYS SOMETHING, which is not the same as the first line.
+         *
+         * <p>This took {@code lines().findFirst()} literally, and a reply that opens with a newline
+         * therefore logged as nothing at all. Measured over 1,544 verifier replies in one corpus:
+         * 1,468 of them, 95 per cent, began with a blank line, so the progress note carried the
+         * stage and the verdict and then stopped, with the objection missing. The objection itself
+         * was never lost, because the whole judgement is spliced into the doer's feedback a few
+         * lines above; what was lost was the one line a person reads to work out why a run is still
+         * going.
+         */
+        private static String firstLine(String s) {
+            return s == null ? "" : s.lines().map(String::strip).filter(l -> !l.isEmpty())
+                    .findFirst().orElse("");
+        }
+
+        /**
+         * WHAT TO WRITE WHEN THERE IS NOTHING TO WRITE, and why it is not the same note.
+         *
+         * <p>{@link #verdictOf} reads silence as {@code again}, deliberately: defaulting it to
+         * {@code done} would close a stage because a request came back empty. But then the note for
+         * a reviewer who objected and the note for a reviewer who said nothing are the same
+         * sentence, and they call for opposite responses. It happened 64 times in 1,544 calls,
+         * about one in twenty-four, so it is worth telling apart.
+         */
+        private static String because(String judgement) {
+            return judgement == null || judgement.isBlank()
+                    ? "the verifier answered nothing, which is read as again rather than as agreement"
+                    : firstLine(judgement);
+        }
+    }
+
+    /**
      * THE SAME NODE, MINUS WHAT IT HAS ALREADY DONE.
      *
      * <p>A run is killed and restarted constantly, because a sweep goes on for a fortnight and the
@@ -369,7 +584,7 @@ public final class Flow {
     /**
      * A BLOCK OF THE TREE, STANDING AS A TRIAD'S DOER.
      *
-     * <p>{@link Triad#inside()} reports its doer when the doer is an agent, and that is the hook
+     * <p>{@link #triad} reports its doer when the doer is an agent, and that is the hook
      * that lets a stage's picture show what happens underneath it. A doer written as a lambda is
      * not an agent, so a stage whose work is a whole walk drew as a leaf: the stage was in the
      * picture and everything it did was not.
@@ -379,7 +594,7 @@ public final class Flow {
      * on them. A default that spliced them into the task would put the walk's whole transcript in
      * front of an agent that was asked about one item.
      */
-    public abstract static class Block implements Triad.Doer, Agent {
+    public abstract static class Block implements Doer, Agent {
 
         /** The nested tree: what this doer runs, and what the picture shows under its stage. */
         public final Agent body;
