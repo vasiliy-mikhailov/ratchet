@@ -21,7 +21,7 @@ one. That is the library: the reasons ship in the sources jar, not just the byte
 | artifact | depends on | what is in it |
 | --- | --- | --- |
 | `ratchet-core` | nothing outside the JDK | the flow, the record, the journal, the bounds |
-| `ratchet-langchain4j` | `ratchet-core`, langchain4j | the model wiring, the tool loop, the listeners |
+| `ratchet-llm` | `ratchet-core`, langchain4j | the model wiring, the tool loop, the listeners |
 
 Take the first without taking a model client. The split is enforced by the compiler, not by a
 convention.
@@ -108,11 +108,13 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ## A note on the name
 
-`ratchet-langchain4j` is named for the library it wires to, which is the convention in this
-ecosystem: langchain4j itself ships `langchain4j-anthropic`, `langchain4j-azure-open-ai`,
-`langchain4j-cohere`, `langchain4j-google-ai-gemini` and `langchain4j-mistral-ai`, and Quarkus
-publishes `quarkus-langchain4j-*` under its own group.
+`ratchet-llm` is named for what it is, the model layer, rather than for the library it currently
+uses. Naming a module after its dependency is a common enough convention, and langchain4j itself
+ships `langchain4j-anthropic` and `langchain4j-mistral-ai`, but that convention fits an integration
+whose whole purpose is the integration. This module's purpose is ratchet's model wiring, and
+langchain4j is how that is built today rather than what it is. A second binding, talking to an
+OpenAI-compatible endpoint directly, would sit beside it without either name becoming wrong.
 
 This project is not affiliated with, sponsored by, or endorsed by LangChain4j or LangChain, Inc.
-LangChain4j is an independent open-source project; LANGCHAIN is a registered trademark of
-LangChain, Inc. The name is used here only to identify the dependency this artifact wires to.
+LangChain4j is an independent open-source project, and LANGCHAIN is a registered trademark of
+LangChain, Inc. It is named here only as a dependency.

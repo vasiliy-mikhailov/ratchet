@@ -5,7 +5,7 @@
 
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-parent</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <packaging>pom</packaging>
 
   <name>ratchet</name>
@@ -50,12 +50,12 @@
   </issueManagement>
 
   <!-- TWO MODULES, SPLIT BY DEPENDENCY AND NOT BY THEME. ratchet-core imports nothing outside the
-       JDK; ratchet-langchain4j imports langchain4j and nothing else. A consumer that wants the
+       JDK; ratchet-llm imports langchain4j and nothing else. A consumer that wants the
        journal and the record does not have to take a model client with it, and the split is
        checked by the compiler rather than by a convention. -->
   <modules>
     <module>ratchet-core</module>
-    <module>ratchet-langchain4j</module>
+    <module>ratchet-llm</module>
   </modules>
 
   <properties>
