@@ -105,3 +105,14 @@ mvn -B verify
 ## Licence
 
 Apache 2.0. See [LICENSE](LICENSE).
+
+## A note on the name
+
+`ratchet-langchain4j` is named for the library it wires to, which is the convention in this
+ecosystem: langchain4j itself ships `langchain4j-anthropic`, `langchain4j-azure-open-ai`,
+`langchain4j-cohere`, `langchain4j-google-ai-gemini` and `langchain4j-mistral-ai`, and Quarkus
+publishes `quarkus-langchain4j-*` under its own group.
+
+This project is not affiliated with, sponsored by, or endorsed by LangChain4j or LangChain, Inc.
+LangChain4j is an independent open-source project; LANGCHAIN is a registered trademark of
+LangChain, Inc. The name is used here only to identify the dependency this artifact wires to.
