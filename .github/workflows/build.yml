@@ -1,0 +1,31 @@
+# THE SECOND OPINION, AND IT IS NOT THE SAME OPINION AS THE ONE AT HOME.
+#
+# At home this builds through a caching Nexus whose group has proxies added by hand over a year.
+# An artifact can resolve there because somebody once added the repository that carries it, which
+# says nothing about whether a stranger can resolve it. This job builds from Central and nothing
+# else, so it fails the day a dependency here is not publicly resolvable, which is the one thing
+# the local route structurally cannot check.
+#
+# IT DOES NOT PUBLISH. Publishing is a deliberate act against an immutable repository: a version
+# goes up once and can never be replaced. A workflow that pushed on every commit would either fail
+# on the second commit or, worse, be given a mutable repository to push to, and then the version
+# number would stop naming one set of bytes.
+name: build
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          # BUILT ON 21, TARGETED AT 17. maven.compiler.release in the pom is the floor a consumer
+          # runtime has to clear, and it is not the same number as the JDK that compiles it.
+          java-version: 21
+          distribution: temurin
+          cache: maven
+      - run: mvn -B verify

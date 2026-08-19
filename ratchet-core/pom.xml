@@ -1,0 +1,15 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>tech.mikhailov.ratchet</groupId>
+    <artifactId>ratchet-parent</artifactId>
+    <version>0.1.0</version>
+  </parent>
+  <artifactId>ratchet-core</artifactId>
+  <packaging>jar</packaging>
+  <name>ratchet-core</name>
+  <description>The journal, the append-only record, the flow and the bounds. JDK only.</description>
+  <!-- NO DEPENDENCIES, AND THAT IS THE POINT OF THE MODULE. Fourteen classes that import nothing
+       outside the JDK. A consumer takes the ratchet without taking a model client, an HTTP client
+       or a JSON library it did not choose. -->
+</project>

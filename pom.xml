@@ -1,0 +1,204 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>tech.mikhailov.ratchet</groupId>
+  <artifactId>ratchet-parent</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+
+  <name>ratchet</name>
+  <description>Structure for an agent loop that has to run on a model too small to choose its own
+    trajectory: a journal so a killed run does not pay twice, an append-only settlement file so the
+    path through the states survives, a runaway latch that fires once and stays fired, and a round
+    bound that stops a loop without capping work that is progressing.</description>
+  <url>https://github.com/vasiliy-mikhailov/ratchet</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <!-- APACHE 2.0, IN A FILE AND IN THE POM, AND NEITHER ALONE IS ENOUGH. A LICENSE file tells a
+       person; these elements tell a resolver, a mirror and an auditor. The library this one
+       replaces had neither, which is the entire reason it could not be published and the entire
+       reason a week was spent finding that out. -->
+  <licenses>
+    <license>
+      <name>The Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>vasiliy-mikhailov</id>
+      <name>Vasiliy Mikhailov</name>
+      <email>vasiliy.mikhailov@gmail.com</email>
+      <url>https://github.com/vasiliy-mikhailov</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/vasiliy-mikhailov/ratchet.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/vasiliy-mikhailov/ratchet.git</developerConnection>
+    <url>https://github.com/vasiliy-mikhailov/ratchet</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/vasiliy-mikhailov/ratchet/issues</url>
+  </issueManagement>
+
+  <!-- TWO MODULES, SPLIT BY DEPENDENCY AND NOT BY THEME. ratchet-core imports nothing outside the
+       JDK; ratchet-langchain4j imports langchain4j and nothing else. A consumer that wants the
+       journal and the record does not have to take a model client with it, and the split is
+       checked by the compiler rather than by a convention. -->
+  <modules>
+    <module>ratchet-core</module>
+    <module>ratchet-langchain4j</module>
+  </modules>
+
+  <properties>
+    <!-- SEVENTEEN, AND THE NUMBER IS LOAD-BEARING. A library sets the FLOOR of every runtime that
+         can load it, and the first consumer runs on eclipse-temurin:17-jre. Compiling this at 21
+         produces class file 65, which that runtime refuses at load time with
+         UnsupportedClassVersionError. javac does not refuse it at build time, so the break
+         appears in a lane and not in a build. Raise this only in the same change that raises the
+         consumer image. -->
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <langchain4j.version>1.9.1</langchain4j.version>
+    <junit.version>5.11.4</junit.version>
+    <surefire.version>3.2.5</surefire.version>
+    <source.plugin.version>3.3.1</source.plugin.version>
+    <javadoc.plugin.version>3.11.2</javadoc.plugin.version>
+    <gpg.plugin.version>3.2.7</gpg.plugin.version>
+  </properties>
+
+  <!-- EVERY VERSION IS DECIDED HERE, and nothing here is imposed on a consumer. langchain4j drags
+       jackson and opennlp in transitively; this pom deliberately does not pin them. A library that
+       manages its consumer transitives takes the pin away from the consumer, and the consumer is
+       the one who has to answer for a CVE. bump-java-version pins both in its own parent, where a
+       dependencyManagement entry beats any transitive, and that is where the decision belongs. -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>tech.mikhailov.ratchet</groupId>
+        <artifactId>ratchet-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.langchain4j</groupId>
+        <artifactId>langchain4j</artifactId>
+        <version>${langchain4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.langchain4j</groupId>
+        <artifactId>langchain4j-open-ai</artifactId>
+        <version>${langchain4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.langchain4j</groupId>
+        <artifactId>langchain4j-http-client-jdk</artifactId>
+        <version>${langchain4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <version>${junit.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Both modules have tests and both run in one reactor pass, so the framework is inherited
+         rather than repeated. It is the only dependency ratchet-core has, and it is test scope. -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <!-- PINNED, NOT INHERITED FROM THE LIFECYCLE, for the same reason bump-java-version pins
+             it: a test count that changes when the build machine s Maven changes is not a test
+             count anybody can compare across a fortnight. -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${surefire.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>${source.plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>${javadoc.plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-gpg-plugin</artifactId>
+          <version>${gpg.plugin.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+    <plugins>
+      <!-- THE SOURCES JAR IS NOT OPTIONAL EITHER. The comments in this library ARE the library:
+           fifteen post-mortems written down beside the code that came out of them. A consumer who
+           gets only bytecode gets the combinators and none of the reasons. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <phase>package</phase>
+            <goals><goal>jar-no-fork</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <!-- NOT ACTIVE BY DEFAULT, because javadoc and a signature are what Maven Central requires and
+       are pure cost for the local route. Publishing to Central later is then a profile flag rather
+       than a pom rewrite, which is the only thing this section is for today. -->
+  <profiles>
+    <profile>
+      <id>maven-central-release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <phase>package</phase>
+                <goals><goal>jar</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

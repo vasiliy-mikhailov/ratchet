@@ -1,0 +1,35 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>tech.mikhailov.ratchet</groupId>
+    <artifactId>ratchet-parent</artifactId>
+    <version>0.1.0</version>
+  </parent>
+  <artifactId>ratchet-langchain4j</artifactId>
+  <packaging>jar</packaging>
+  <name>ratchet-langchain4j</name>
+  <description>The model wiring: the streaming reply, the thinking budget, the tool loop and the
+    listener that records the wire. langchain4j only.</description>
+  <!-- THREE ARTIFACTS AND NO MORE. langchain4j carries AiServices and the tool loop, -open-ai
+       carries the streaming model, and the JDK http client is what both are pointed at. Each is
+       named here rather than arriving through somebody else s transitive, because a compile that
+       leans on a transitive is a compile that breaks when that somebody stops needing it. -->
+  <dependencies>
+    <dependency>
+      <groupId>tech.mikhailov.ratchet</groupId>
+      <artifactId>ratchet-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j-open-ai</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j-http-client-jdk</artifactId>
+    </dependency>
+  </dependencies>
+</project>
