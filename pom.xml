@@ -5,14 +5,15 @@
 
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-parent</artifactId>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <packaging>pom</packaging>
 
   <name>ratchet</name>
   <description>Structure for an agent loop that has to run on a model too small to choose its own
     trajectory: a journal so a killed run does not pay twice, an append-only settlement file so the
-    path through the states survives, a runaway latch that fires once and stays fired, and a round
-    bound that stops a loop without capping work that is progressing.</description>
+    path through the states survives, a runaway latch that fires once and stays fired, a bound on a
+    tool loop that does not cap work that is progressing, and a round boundary that hands a
+    workspace over between stages with a rule for when the next run may pick it up.</description>
   <url>https://github.com/vasiliy-mikhailov/ratchet</url>
   <inceptionYear>2026</inceptionYear>
 

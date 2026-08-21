@@ -1,9 +1,13 @@
 package tech.mikhailov.ratchet.record;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * The last word per run, in a file a reader can open without replaying anything.
@@ -13,6 +17,15 @@ import java.nio.file.StandardOpenOption;
  * its states, and that path is half of what a reader came for.
  */
 public final class Settlement {
+
+    /**
+     * THE COLUMN A ROW IS KEYED BY, named once because two readers now share it.
+     *
+     * <p>It says {@code bump} whatever your domain is, for the reason the comment in {@link #write}
+     * gives: the first consumer's launcher greps this row and bash re-reads a running script by
+     * byte offset, so the name cannot be corrected while a sweep is up.
+     */
+    static final String KEY = "bump";
 
     private Settlement() {
     }
@@ -69,7 +82,8 @@ public final class Settlement {
             // the launcher cannot be corrected while it is up. Rename the parameters as much as you
             // like; the strings below are a format, and generalising them into a caller-named map
             // is the next version's change, gated on that project's own lanes test.
-            String row = "{\"at\":\"" + System.currentTimeMillis() + "\",\"bump\":\"" + escape(key)
+            String row = "{\"at\":\"" + System.currentTimeMillis() + "\",\"" + KEY + "\":\""
+                    + escape(key)
                     + "\",\"state\":\"" + escape(state) + "\",\"because\":\"" + escape(because)
                     + "\",\"baseline\":" + beforeOk + ",\"gate\":" + afterOk + extra
                     + (version.isEmpty() ? "" : "," + version) + "}\n";
@@ -77,6 +91,49 @@ public final class Settlement {
         } catch (IOException e) {
             System.err.println("settlement: " + e.getMessage());
         }
+    }
+
+    /**
+     * EVERY ROW ABOUT ONE KEY, IN THE ORDER THEY WERE WRITTEN, read the only way this file can be.
+     *
+     * <p>Lenient, because it is appended to by a process that gets killed: a torn last line is the
+     * normal case rather than a fault, and a row nothing can parse is a row that says nothing.
+     * BYTES RATHER THAN LINES for the same reason the journal reads that way, since a file cut in
+     * the middle of a character makes {@code Files.readAllLines} throw.
+     *
+     * <p>THE KEY IS CHECKED RATHER THAN ASSUMED. The whole sweep shares this file, so a row that
+     * merely mentions the key is not a row about it; the substring test in front of the parse is
+     * only there to keep a long record cheap to walk.
+     *
+     * <p>Package-visible: {@link Round} counts boundaries off it and {@link Resume} reads the last
+     * row off it, and neither is a reason to publish a parser this library does not otherwise ship.
+     */
+    static List<Map<String, String>> rowsFor(Path file, String key) {
+        if (!Files.isReadable(file)) {
+            return List.of();
+        }
+        String text;
+        try {
+            text = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+        } catch (IOException unreadable) {
+            return List.of();
+        }
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (String line : text.split("\n")) {
+            if (!line.contains(key)) {
+                continue;
+            }
+            Map<String, String> row;
+            try {
+                row = Json.row(line);
+            } catch (RuntimeException torn) {
+                continue;
+            }
+            if (key.equals(row.getOrDefault(KEY, ""))) {
+                rows.add(row);
+            }
+        }
+        return rows;
     }
 
     /** JSON string escaping, shared by every writer here so there is exactly one. Two escapers

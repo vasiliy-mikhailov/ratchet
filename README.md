@@ -11,7 +11,9 @@ property the pieces share is that work does not slide back:
 - the **settlement file** is append-only and last row wins, so the path a run took through its
   states survives the run,
 - the **runaway latch** fires once and stays fired,
-- the **round bound** stops a loop without capping work that is progressing.
+- the **tool-loop bound** stops a loop without capping work that is progressing,
+- the **round boundary** ends a run between stages when its budget is up, and the **resume rule**
+  refuses to pick that workspace up again unless four things agree.
 
 None of that is clever. All of it is a post-mortem written down as code, and the comments say which
 one. That is the library: the reasons ship in the sources jar, not just the bytecode.
@@ -30,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
 </dependency>
 ```
 
@@ -51,7 +53,10 @@ the producer. `Shape` walks the tree that runs, so a picture of the program cann
 interface everything reports through. `JsonlTrace` is the file format: one event per line, plus a
 settlements file beside it holding the last word per unit of work. `Journal` is the append-only
 file a resume reads, torn last line and all. `Json` is the small writer and the tolerant reader for
-arguments a model composed. `Digest` is the eight-character fingerprint every row carries.
+arguments a model composed. `Digest` is the eight-character fingerprint every row carries. `Round`
+is which slice of a wall-clock budget this run is in, counted off the settlement rows rather than
+kept anywhere, and whether a launcher has asked it to hand over. `Resume` is the four-clause rule
+for whether this attempt may pick a killed one up.
 
 `tech.mikhailov.ratchet.config` is what the run was told before the code started: `Env`, and
 `Prompts`, an on-disk store whose text replaces the code's own, per agent and per variant.
@@ -72,7 +77,7 @@ a map of tool specifications to executors that you write; `Recording.at` around 
 `Listening.register` called for each; then `Flow` to compose them and a `Journal` to make the
 whole thing resumable. About forty lines.
 
-## Three things that will catch you
+## Four things that will catch you
 
 **`Listening.register` is explicit.** Call it once per agent, with the prompt actually in force, or
 every exchange row is attributed to nobody: 737 of them in one sweep were. `Asking` does not do it
@@ -90,6 +95,13 @@ dashboard reads, and bash re-reads a running script by byte offset, so that laun
 corrected while a sweep is up. Generalising the row into a caller-named shape is a later, additive
 change. Until then the names are a wire format, and `TheSettledRowIsAWireFormatTest` pins them
 character for character.
+
+**`Resume` never learns what your version is.** It takes the same composed string you hand
+`Settlement.note`, and it compares the fields that string names against the row on disk, one at a
+time, with empty counting as a value. So a field the running side stopped emitting is a dimension
+the comparison loses rather than a mismatch it reports, and anything else on the row, a round
+number for instance, is invisible to it. That is deliberate: the alternative is this library
+holding one consumer's idea of what a version is made of.
 
 ## What is not here
 
