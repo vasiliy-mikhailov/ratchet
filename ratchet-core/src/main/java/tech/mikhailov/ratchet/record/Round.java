@@ -22,7 +22,9 @@ import java.nio.file.Path;
  * settlement rows already carry, and two copies of one fact drift. One {@link #PAUSED} row is
  * written per round that ended, by whichever side ended it, so the count of them plus one is the
  * round now starting. A launcher counting the same rows the same way gets the same answer, which is
- * what lets either side end a round without a number crossing between them.
+ * what lets either side end a round without a number crossing between them, and which is why the
+ * one judgement in the counting, what restarts it, is the caller's to state rather than this
+ * library's to assume.
  *
  * <p>THE TWO PATHS ARE THE CALLER'S CONVENTIONS AND NOT THIS LIBRARY'S. Where the record lives and
  * where a launcher leaves its word are decisions a consumer already made, usually by naming a run
@@ -53,9 +55,12 @@ public final class Round {
      * @param settlements the append-only record this run's boundaries are counted off
      * @param key         the run's own key, because the record is shared by the whole sweep
      * @param stop        the path a launcher creates to ask this run to hand over
+     * @param restart     the consumer's word for somebody asking for the work again FROM THE
+     *                    START, such as {@code requeued}. The count begins again at such a row,
+     *                    for the reason in {@link #ended}. Empty when nothing restarts it.
      */
-    public static Round of(Path settlements, String key, Path stop) {
-        return new Round(stop, ended(settlements, key) + 1);
+    public static Round of(Path settlements, String key, Path stop, String restart) {
+        return new Round(stop, ended(settlements, key, restart) + 1);
     }
 
     /** A round that can never end, for a run built to be read rather than launched. */
@@ -90,14 +95,28 @@ public final class Round {
     /**
      * How many rounds of this key have already ended, read off the record.
      *
+     * <p>A REQUEUE STARTS THE COUNT AGAIN, which is a correction and not a refinement. Counting
+     * every boundary a subject had ever had meant a subject paused three times last week met its
+     * launcher's ceiling on the FIRST round of a fresh attempt and was filed as having run out,
+     * having spent nothing. That state is explicitly not a verdict about the subject, and it reads
+     * as one. The launcher this came from was corrected and its Java counter was not, so the two
+     * sides disagreed about a number they both derive; here they cannot, because the word that
+     * restarts the count arrives from the same caller that tells the launcher.
+     *
+     * <p>IN ROW ORDER, which is the whole of why this is a walk rather than a filter. A reset only
+     * means anything against the rows that came before it.
+     *
      * <p>The reading is lenient because the file is appended to by a process that gets killed, so a
      * torn line is the normal case rather than a fault; a row nothing can parse is a row that says
      * nothing, which is not a round. See {@link Settlement#rowsFor}.
      */
-    private static int ended(Path settlements, String key) {
+    private static int ended(Path settlements, String key, String restart) {
         int n = 0;
         for (var row : Settlement.rowsFor(settlements, key)) {
-            if (PAUSED.equals(row.getOrDefault("state", ""))) {
+            String said = row.getOrDefault("state", "");
+            if (restart != null && !restart.isEmpty() && restart.equals(said)) {
+                n = 0;
+            } else if (PAUSED.equals(said)) {
                 n++;
             }
         }

@@ -34,6 +34,9 @@ class ARoundEndsBetweenStagesTest {
 
     private static final String KEY = "owner/repo|abc123|17|21";
 
+    /** The consumer's word for somebody asking for the work again from the start. */
+    private static final String REQUEUED = "requeued";
+
     /** A settlement row in the shape the file already holds them. */
     private static void settle(Path settlements, String key, String state) {
         Settlement.note(settlements, key, state, "because", false, false, "");
@@ -60,6 +63,32 @@ class ARoundEndsBetweenStagesTest {
         settle(settlements, KEY, "bumping");
         settle(settlements, KEY, Round.PAUSED);
         assertEquals(3, round(settlements, dir).number());
+    }
+
+    /**
+     * AND THE COUNT BEGINS AGAIN WHEN SOMEBODY ASKS FOR THE WORK FROM THE START.
+     *
+     * <p>Counting every boundary a subject had ever had meant a subject paused three times last
+     * week met its launcher's ceiling on the first round of a fresh attempt and was filed as having
+     * run out, having spent nothing. That state is not a verdict about the subject and it reads as
+     * one on a page.
+     *
+     * <p>The consumer this came from corrected its launcher and not its Java, so one side answered
+     * three where the other answered one, about a number they both derive from the same rows. The
+     * word arrives from the caller here so that cannot happen twice.
+     */
+    @Test
+    void theCountBeginsAgainWhenSomebodyAsksForTheWorkFromTheStart(@TempDir Path dir) {
+        Path settlements = dir.resolve("settlements.jsonl");
+        settle(settlements, KEY, Round.PAUSED);
+        settle(settlements, KEY, Round.PAUSED);
+        settle(settlements, KEY, REQUEUED);
+        settle(settlements, KEY, Round.PAUSED);
+
+        assertEquals(2, round(settlements, dir).number(),
+                "one boundary since the requeue, so the round starting now is the second");
+        assertEquals(4, Round.of(settlements, KEY, dir, "").number(),
+                "and a consumer that names no such word counts every boundary there ever was");
     }
 
     /**
@@ -90,7 +119,7 @@ class ARoundEndsBetweenStagesTest {
     @Test
     void theRoundEndsWhenTheMarkerAppearsAndNotBefore(@TempDir Path dir) throws Exception {
         Path stop = dir.resolve("expiring").resolve("owner_repo");
-        Round round = Round.of(dir.resolve("settlements.jsonl"), KEY, stop);
+        Round round = Round.of(dir.resolve("settlements.jsonl"), KEY, stop, REQUEUED);
 
         assertFalse(round.reached(), "nobody has asked this run to hand over");
 
@@ -165,6 +194,7 @@ class ARoundEndsBetweenStagesTest {
 
     /** The round a launcher would build: the record it counts off, and the word it waits for. */
     private static Round round(Path settlements, Path dir) {
-        return Round.of(settlements, KEY, dir.resolve("expiring").resolve("owner_repo"));
+        return Round.of(settlements, KEY, dir.resolve("expiring").resolve("owner_repo"),
+                REQUEUED);
     }
 }
