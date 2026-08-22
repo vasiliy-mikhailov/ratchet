@@ -48,8 +48,40 @@ class AKilledRunPicksUpWhereItStoppedTest {
         Settlement.note(settlements, key, state, "because", false, false, VERSION);
     }
 
+    @Test
+    void theVersionIsWhateverTheReaderSaysItIsAndNothingElse(@TempDir Path dir) throws Exception {
+        // THE CONSUMER OWNS THE DIMENSIONS, which is the point of handing the reader in. Before it
+        // was handed in, this class inferred the field set from whatever string it was given, so a
+        // caller whose running version named fewer fields than its own writer had recorded compared
+        // only the ones it happened to mention and resumed across the difference. One function on
+        // both sides makes that unconstructable rather than undetectable.
+        Path settlements = dir.resolve("settlements.jsonl");
+        Journal journal = new Journal(dir.resolve("journal.jsonl"), () -> "sha1");
+        journal.done("before-pins", "core", "core: pinned", "sha1");
+        settle(settlements, KEY, Round.PAUSED);
+
+        Resume twoOfThem = Resume.of(settlements, KEY, IN_FLIGHT,
+                row -> row.getOrDefault("commit", "") + "|" + row.getOrDefault("prompts", ""));
+
+        assertTrue(twoOfThem.picksUp(journal, "sha1", "ff7a4ab3|54906737"),
+                "a reader that names two fields is answered on two fields");
+        assertFalse(twoOfThem.picksUp(journal, "sha1", "ff7a4ab4|54906737"),
+                "and still refuses when one of the two it names has moved");
+        assertTrue(twoOfThem.picksUp(journal, "sha1", "ff7a4ab3|54906737"),
+                "the image and the boms are not dimensions of this reader, so they cannot refuse it");
+    }
+
+    // THE READER A CONSUMER WOULD HAND IN, and it is the same four names version() writes, which
+    // is the point: one function composes both sides, so a field this stops naming changes the
+    // string on both and the comparison sees it.
+    private static String versionOf(java.util.Map<String, String> row) {
+        return version(row.getOrDefault("commit", ""), row.getOrDefault("image", ""),
+                row.getOrDefault("prompts", ""), row.getOrDefault("boms", ""));
+    }
+
     private static Resume resume(Path settlements) {
-        return Resume.of(settlements, KEY, IN_FLIGHT);
+        return Resume.of(settlements, KEY, IN_FLIGHT,
+                AKilledRunPicksUpWhereItStoppedTest::versionOf);
     }
 
     /**
@@ -131,7 +163,8 @@ class AKilledRunPicksUpWhereItStoppedTest {
         Path settlements = dir.resolve("settlements.jsonl");
         Journal journal = new Journal(dir.resolve("journal.jsonl"), () -> "sha1");
         journal.done("before-pins", "core", "core: pinned", "sha1");
-        Resume unnamed = Resume.of(settlements, KEY, "");
+        Resume unnamed = Resume.of(settlements, KEY, "",
+                AKilledRunPicksUpWhereItStoppedTest::versionOf);
 
         settle(settlements, KEY, IN_FLIGHT);
         assertFalse(unnamed.picksUp(journal, "sha1", VERSION),
@@ -201,8 +234,12 @@ class AKilledRunPicksUpWhereItStoppedTest {
                 "a blank version agrees with nothing except another blank one");
 
         // AND A HOST WHERE NOTHING CAN BE STAMPED STILL RESUMES, because empty matches empty and
-        // the comparison simply loses those dimensions rather than refusing every run.
-        assertTrue(resume(older).picksUp(journal, "sha1", ""));
+        // the comparison simply loses those dimensions rather than refusing every run. What such a
+        // host passes is four empty values rather than nothing at all: with the reader handed in,
+        // a caller always composes, so version("","","","") is the shape and "" never occurs.
+        // Injecting the reader is what made that distinction visible; it was hidden while this
+        // class inferred the shape from whatever string it was given.
+        assertTrue(resume(older).picksUp(journal, "sha1", version("", "", "", "")));
     }
 
     /**

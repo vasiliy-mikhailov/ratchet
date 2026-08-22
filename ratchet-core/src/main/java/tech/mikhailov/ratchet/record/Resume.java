@@ -2,6 +2,7 @@ package tech.mikhailov.ratchet.record;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * DOES THIS ATTEMPT PICK UP AN UNFINISHED ONE, and the answer is no unless all four agree.
@@ -42,11 +43,14 @@ public final class Resume {
     private final Path settlements;
     private final String key;
     private final String inFlight;
+    private final Function<Map<String, String>, String> versionOf;
 
-    private Resume(Path settlements, String key, String inFlight) {
+    private Resume(Path settlements, String key, String inFlight,
+                   Function<Map<String, String>, String> versionOf) {
         this.settlements = settlements;
         this.key = key;
         this.inFlight = inFlight == null ? "" : inFlight;
+        this.versionOf = versionOf;
     }
 
     /**
@@ -57,8 +61,16 @@ public final class Resume {
      * @param inFlight    the consumer's word for a run that died mid-sentence, such as
      *                    {@code bumping}. {@link Round#PAUSED} is resumable without being named.
      */
-    public static Resume of(Path settlements, String key, String inFlight) {
-        return new Resume(settlements, key, inFlight);
+    /**
+     * @param versionOf reads the version out of a recorded row, in the same form the caller will
+     *                  pass to {@link #picksUp}. This is the whole of what this class knows about
+     *                  versions: nothing. Handing the reader in rather than inferring the shape from
+     *                  the value is what lets a DROPPED field be seen, because both sides are then
+     *                  produced by one function and a missing field changes the string.
+     */
+    public static Resume of(Path settlements, String key, String inFlight,
+                            Function<Map<String, String>, String> versionOf) {
+        return new Resume(settlements, key, inFlight, versionOf);
     }
 
     /**
@@ -79,7 +91,7 @@ public final class Resume {
         if (!interrupted) {
             return false;
         }
-        if (!sameVersion(last, version)) {
+        if (!versionOf.apply(last).equals(version == null ? "" : version)) {
             return false;
         }
         return journal.standsOn(workspaceSha);
@@ -117,36 +129,4 @@ public final class Resume {
      * appended to the same row by the same writer, and it must not read as a version that moved or
      * nothing would ever resume.
      */
-    /**
-     * DOES THE STORED ROW CARRY THE VERSION THAT IS RUNNING NOW.
-     *
-     * <p>BOTH SIDES GO THROUGH ONE PARSER, which is the whole of the fix here. The row arrives
-     * unescaped, because {@link Settlement#rowsFor} read it with {@link Json#row}. The version
-     * arrives as the composed fragment the caller is about to write, escapes and all. Comparing
-     * those two with a regex meant a value holding a quote could never match its own recorded self,
-     * so the bump never resumed, silently and for ever. Wrapping the fragment in braces and handing
-     * it to the same reader makes the two comparable by construction rather than by agreement.
-     *
-     * <p>A VERSION THAT NAMES NOTHING LOSES THE DIMENSION RATHER THAN REFUSING, which is deliberate
-     * and is what {@code aResumeIsRefusedWhenTheRowWasWrittenByADifferentVersion} asserts in its
-     * last line: a host that cannot stamp a build still resumes, because blank agrees with blank.
-     * The cost is the asymmetry below, and it is the caller's to avoid: a caller holding a version
-     * and passing an empty one gets a resume it did not check for. Pass what you have.
-     *
-     * <p>WHAT THIS STILL CANNOT SEE, said plainly because a caller will meet it eventually: fields
-     * the running version has DROPPED. Only the names the running side offers are compared, so a
-     * version that stops naming a field resumes across the change that removed it. Catching that
-     * needs to know which columns of a row are version columns, and knowing that means learning the
-     * consumer's domain, which is the one thing this class must not do. A caller who needs it
-     * should keep the field set fixed and let a removed field go empty rather than absent.
-     */
-    private static boolean sameVersion(Map<String, String> row, String version) {
-        Map<String, String> named = Json.row("{" + (version == null ? "" : version) + "}");
-        for (Map.Entry<String, String> field : named.entrySet()) {
-            if (!field.getValue().equals(row.getOrDefault(field.getKey(), ""))) {
-                return false;
-            }
-        }
-        return true;
-    }
 }
