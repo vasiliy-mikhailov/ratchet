@@ -29,9 +29,15 @@ class AKilledRunPicksUpWhereItStoppedTest {
     private static final String IN_FLIGHT = "bumping";
 
     /** One version, as the row records it and as the rule compares it. */
+    // ESCAPED, BECAUSE THE THING IT STANDS FOR IS. Version.fields composes this fragment through
+    // Settlement.escape, so a fixture that concatenated raw would be better behaved than production
+    // and would hide exactly the defect this file now pins: a value carrying a quote used to be
+    // read one way on the row side and another on the running side.
     private static String version(String commit, String image, String prompts, String boms) {
-        return "\"commit\":\"" + commit + "\",\"image\":\"" + image + "\",\"prompts\":\"" + prompts
-                + "\",\"boms\":\"" + boms + "\"";
+        return "\"commit\":\"" + Settlement.escape(commit)
+                + "\",\"image\":\"" + Settlement.escape(image)
+                + "\",\"prompts\":\"" + Settlement.escape(prompts)
+                + "\",\"boms\":\"" + Settlement.escape(boms) + "\"";
     }
 
     private static final String VERSION =
@@ -147,6 +153,28 @@ class AKilledRunPicksUpWhereItStoppedTest {
      * consumer started recording part of its identity carries an empty one, and reading empty as
      * "no objection" would resume across exactly the change that introduced this check.
      */
+    @Test
+    void aVersionCarryingAQuoteStillRecognisesItself(@TempDir Path dir) throws Exception {
+        // THE ROW COMES BACK UNESCAPED AND THE RUNNING VERSION ARRIVES AS WRITTEN, so for a while
+        // these two were compared by different readers: one regex that stopped at the first quote
+        // and kept the backslashes, against a map Json.row had already unescaped. A value holding a
+        // quote could not match its own recorded self, so the run never resumed, nothing failed and
+        // nothing was logged, and the work was quietly done twice. Both sides go through one parser
+        // now, and this is the case that tells the difference.
+        Path settlements = dir.resolve("settlements.jsonl");
+        Journal journal = new Journal(dir.resolve("journal.jsonl"), () -> "sha1");
+        journal.done("before-pins", "core", "core: pinned", "sha1");
+
+        String awkward = version("say \"yes\"", "back\\slash", "54906737", "bb42094f");
+        Settlement.note(settlements, KEY, Round.PAUSED, "b", false, false, awkward);
+
+        assertTrue(resume(settlements).picksUp(journal, "sha1", awkward),
+                "a version agrees with itself whatever characters it holds");
+        assertFalse(resume(settlements).picksUp(journal, "sha1",
+                        version("say \"no\"", "back\\slash", "54906737", "bb42094f")),
+                "and still refuses one that only looks similar");
+    }
+
     @Test
     void aResumeIsRefusedWhenTheRowWasWrittenByADifferentVersion(@TempDir Path dir)
             throws Exception {
