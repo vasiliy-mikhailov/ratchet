@@ -25,7 +25,7 @@ one. That is the library: the reasons ship in the sources jar, not just the byte
 | `ratchet-core` | nothing outside the JDK | the flow, the record, the journal, the bounds |
 | `ratchet-llm` | `ratchet-core` | the model wiring, the tool loop, the listeners |
 
-Neither takes anything outside the JDK. As of 0.13.1 `ratchet-llm` speaks to an OpenAI-compatible
+Neither takes anything outside the JDK. As of 0.14.0 `ratchet-llm` speaks to an OpenAI-compatible
 endpoint directly: the request is written with ratchet's own JSON, the reply is read off the SSE
 frames, and the tool loop is fifteen lines. It used to take langchain4j and three artifacts behind
 it — 13 jars and 7.9 MB inherited by anyone who wanted so much as the retry schedule, including an
@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.13.1</version>
+  <version>0.14.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.13.1 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.14.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -94,7 +94,8 @@ cannot be the guard that fires. `Chat`, `Ask`, `Reply`, `Said`, `Tool`, `Called`
 the vocabulary; `Ending` says why the model stopped and `Spend` what it cost. `Model` builds the
 whole chain with a thinking budget. `Asking` is one agent: a system prompt, a closed set of tools,
 a bounded tool loop it owns. `Reasoning` latches once when the reasoning starts repeating itself.
-`Listening` records every exchange as it happened. `Retrying` asks a dropped call again, up to
+`Listening` records every exchange as it happened, attributed by the label the request
+carries rather than by matching its system prompt against a global registry. `Retrying` asks a dropped call again, up to
 `RATCHET_ATTEMPTS` times, because the journal only preserves a whole node and a reset halfway
 through one destroys every call that node already paid for; the wait is a Fibonacci second plus a
 draw of up to `RATCHET_JITTER_SECONDS`, so a sweep's lanes do not all come back at the same instant,
@@ -198,16 +199,17 @@ clock every time it is read, which is what an attempt sitting on a stalled socke
 
 An OpenAI-compatible endpoint in `RATCHET_BASE`, `RATCHET_MODEL` and `RATCHET_KEY`; a `JsonlTrace`;
 a map of tool specifications to executors that you write; `Recording.at` around it;
-`Model.forProducer` and `Model.forCritic`; an `Asking` per agent, wrapped in `Insisting`, with
-`Listening.register` called for each; then `Flow` to compose them and a `Journal` to make the
-whole thing resumable. About forty lines.
+`Model.forProducer` and `Model.forCritic`; an `Asking` per agent, wrapped in `Insisting`; then
+`Flow` to compose them and a `Journal` to make the whole thing resumable. About forty lines.
 
 ## Four things that will catch you
 
-**`Listening.register` is explicit.** Call it once per agent, with the prompt actually in force, or
-every exchange row is attributed to nobody: 737 of them in one sweep were. `Asking` does not do it
-for you, because it is built with a label and you register under a name, and quietly making those
-the same string would rewrite the agent column of every row a corpus already holds.
+**A hand-built `Ask` should say who is asking.** `new Ask(messages, tools, "agent:doer")`, or the
+exchange row is attributed to nobody. `Asking` fills it in from its own label, so a pipeline built
+the ordinary way never has to think about it. Until 0.14.0 this was recovered by matching the system
+prompt against a process-global registry you had to remember to populate — see ratchet#10 for what
+that cost, and note that a consumer upgrading from 0.13.x deletes their `Listening.register` calls
+rather than replacing them.
 
 **`Prompts.beside` is a static global.** It is written before any agent is built and read after,
 which is the only ordering that matters, and the alternative was threading a path through every
@@ -250,7 +252,7 @@ module should be named for what it is rather than for the library it happens to 
 that stood here ended: *"A second binding, talking to an OpenAI-compatible endpoint directly, would
 sit beside it without either name becoming wrong."*
 
-In 0.13.1 that binding was written, and it did not sit beside — it replaced. The name survived the
+In 0.14.0 that binding was written, and it did not sit beside — it replaced. The name survived the
 change, which is the whole of the argument for having made it.
 
 ratchet no longer depends on langchain4j. It is an independent open-source project and this one is

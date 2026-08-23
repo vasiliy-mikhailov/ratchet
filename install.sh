@@ -9,7 +9,7 @@
 #
 #   ./install.sh                      the newest tag, into ~/.m2
 #   ./install.sh v0.5.0               a specific one
-#   ./install.sh v0.13.1 -r ~/.m2-fitness/repository   into a repository another build reads
+#   ./install.sh v0.14.0 -r ~/.m2-fitness/repository   into a repository another build reads
 #
 # `-r` becomes -Dmaven.repo.local, which wants the REPOSITORY directory, not the `.m2` above it.
 # The example in 0.11.1 said `~/.m2-fitness` and would have installed a directory level too high.

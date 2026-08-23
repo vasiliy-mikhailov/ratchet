@@ -31,47 +31,24 @@ import tech.mikhailov.ratchet.record.Trace;
 public final class Listening {
 
     /**
-     * WHICH AGENT IS SPEAKING, WITHOUT A THREAD-LOCAL AND WITHOUT A FIELD ON THE CLIENT.
+     * WHO IS SPEAKING NOW ARRIVES WITH THE QUESTION, and this class used to reconstruct it.
      *
-     * <p>ONE CLIENT SERVES EVERY AGENT IN THE FLOW — eight of them in the sample pipeline against a
-     * single producer — so the client cannot be told the name when it is built, and doing it that
-     * way would reproduce the exact bug this lookup exists to fix rather than remove it. A
-     * thread-local is a guess once the transport has its own thread.
+     * <p>What stood here was a process-global {@code Map<String, String>} keyed by system prompt,
+     * a {@code register(agent, prompt)} every consumer had to remember to call, and an
+     * {@code agentOf} that scanned every registered prompt looking for the longest one contained in
+     * the message. The javadoc defended it well and the defence was true: one client serves every
+     * agent in a flow, a thread-local is a guess once the transport has its own thread, and the
+     * system message was the one reliable thing that arrived.
      *
-     * <p>What is reliable is the system message: every agent's prompt is distinct and it travels
-     * with the request. Registering them at definition time turns identity into a lookup.
+     * <p>IT WAS TRUE OF SOMEBODY ELSE'S REQUEST TYPE. This library defines {@link Ask} now, and
+     * nothing prevented a third component — so 0.13.0 removed the reason for the registry and kept
+     * the registry. ratchet#10 is the consumer who noticed, and the cost they measured is why this
+     * is a deletion rather than a deprecation: 277,022 exchange rows in one sweep, each scanning
+     * around twenty keys, one of which was a prompt with a 23 KB bill of materials spliced into it.
      *
-     * <p>REGISTRATION IS EXPLICIT, AND IT IS THE ONE THING A CONSUMER MUST NOT FORGET. {@link Asking}
-     * could register itself, and then nobody could get this wrong; it does not, because it is built
-     * with a LABEL and a consumer registers under a NAME, and the two are not the same string.
-     * Auto-registering would silently rewrite the agent column of every exchange row a corpus
-     * already holds. Call this once per agent, or every exchange is attributed to nobody: 737 of
-     * them in one sweep were.
+     * <p>{@link Asking} already had the answer in a field and was already handing it to the tool
+     * listener exactly. Two mechanisms answering one question, and only one of them could be wrong.
      */
-    private static final Map<String, String> BY_PROMPT = new ConcurrentHashMap<>();
-
-    public static void register(String agent, String systemPrompt) {
-        if (systemPrompt != null && !systemPrompt.isBlank()) {
-            BY_PROMPT.put(systemPrompt.strip(), agent);
-        }
-    }
-
-    /** The longest registered prompt this system message carries; longest, so a prefix cannot win. */
-    static String agentOf(String systemMessage) {
-        if (systemMessage == null) {
-            return "";
-        }
-        String best = "";
-        int longest = 0;
-        for (Map.Entry<String, String> e : BY_PROMPT.entrySet()) {
-            if (e.getKey().length() > longest && systemMessage.contains(e.getKey())) {
-                best = e.getValue();
-                longest = e.getKey().length();
-            }
-        }
-        return best;
-    }
-
     private final Trace trace;
 
     /** Agents whose system prompt this run has already written down once. */
@@ -88,21 +65,22 @@ public final class Listening {
      * filed its own prompt seventeen seconds late, AFTER the streamed reasoning it had caused, so
      * the record read backwards: the model thinking, and then what it had been asked.
      */
-    void sending(List<Said> messages) {
+    void sending(Ask ask) {
         try {
-            String agent = agentOf(system(messages));
-            trace.exchanged(new Trace.Exchange("to", agent, messages.size(),
-                    outbound(agent, messages), "", "", "", 0, 0, 0, ""));
+            List<Said> messages = ask.messages();
+            trace.exchanged(new Trace.Exchange("to", ask.from(), messages.size(),
+                    outbound(ask.from(), messages), "", "", "", 0, 0, 0, ""));
         } catch (RuntimeException recordingMustNotBreakTheRun) {
             note(recordingMustNotBreakTheRun);
         }
     }
 
-    void back(List<Said> sent, Reply reply, long ms) {
+    void back(Ask ask, Reply reply, long ms) {
         try {
+            List<Said> sent = ask.messages();
             String tools = reply.calls().stream().map(Called::name).distinct()
                     .reduce((a, b) -> a + "," + b).orElse("");
-            trace.exchanged(new Trace.Exchange("back", agentOf(system(sent)), sent.size(), "",
+            trace.exchanged(new Trace.Exchange("back", ask.from(), sent.size(), "",
                     tail(reply.said()), tools, reply.ending().name(),
                     reply.spend().prompt(), reply.spend().completion(), ms, ""));
         } catch (RuntimeException recordingMustNotBreakTheRun) {
@@ -112,9 +90,10 @@ public final class Listening {
         }
     }
 
-    void failed(List<Said> sent, Throwable cause, long ms) {
+    void failed(Ask ask, Throwable cause, long ms) {
         try {
-            trace.exchanged(new Trace.Exchange("back", agentOf(system(sent)), sent.size(), "", "",
+            List<Said> sent = ask.messages();
+            trace.exchanged(new Trace.Exchange("back", ask.from(), sent.size(), "", "",
                     "", "ERROR", 0, 0, ms, cause == null ? "unknown"
                             : cause.getClass().getSimpleName() + ": " + cause.getMessage()));
         } catch (RuntimeException ignored) {
@@ -130,14 +109,6 @@ public final class Listening {
         }
     }
 
-    private static String system(List<Said> messages) {
-        for (Said m : messages) {
-            if (m.role() == Said.Role.SYSTEM) {
-                return m.text();
-            }
-        }
-        return "";
-    }
 
     /**
      * WHAT ACTUALLY WENT, WHICH INCLUDES THE PROMPT.
@@ -190,6 +161,12 @@ public final class Listening {
      * nothing but tool calls says so rather than showing an empty line.
      */
     private static String said(Said m) {
+        // THE TOOL THAT PRODUCED IT MATTERS AS MUCH AS THE TEXT: a result with no name reads as an
+        // answer from nowhere, and by the third turn a request carries several of them. ratchet#9.
+        if (m.role() == Said.Role.TOOL) {
+            String named = m.answeringName();
+            return named.isEmpty() ? m.text() : named + " -> " + m.text();
+        }
         if (m.role() == Said.Role.ASSISTANT && m.text().isEmpty() && !m.calls().isEmpty()) {
             return m.calls().stream().map(c -> c.name() + c.arguments())
                     .reduce((a, b) -> a + "\n" + b).orElse("");

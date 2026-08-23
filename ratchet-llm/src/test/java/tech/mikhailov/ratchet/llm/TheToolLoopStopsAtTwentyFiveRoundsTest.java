@@ -170,10 +170,14 @@ class TheToolLoopStopsAtTwentyFiveRoundsTest {
         assertEquals(4, second.size(), "the assistant turn and one result per call are appended");
         assertEquals(Said.Role.TOOL, second.get(3).role());
         assertEquals("the answer, verbatim", second.get(3).text());
-        // AGAINST THE ID THAT ASKED FOR IT, which is now this library's job rather than a client
+        // AGAINST THE CALL THAT ASKED FOR IT, which is now this library's job rather than a client
         // library's: a conversation that answers a call with the wrong id is one the model cannot
         // follow, and it is the single easiest thing to get wrong when writing this loop by hand.
-        assertEquals("t", second.get(3).answering());
+        assertEquals("t", second.get(3).answering().id());
+        // AND THE NAME, which 0.13.0 dropped. The id is what the server matches on and the name is
+        // what a reader matches on, and keeping only the first turned the record into a column of
+        // answers with no questions attached. ratchet#9, and see TheToolResultNamesItsToolTest.
+        assertEquals("ping", second.get(3).answering().name());
     }
 
     @Test

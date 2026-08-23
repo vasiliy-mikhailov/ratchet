@@ -119,7 +119,7 @@ public final class Asking implements Agent {
         conversation.add(Said.system(systemPrompt));
         conversation.add(Said.user(task));
 
-        Reply reply = model.answer(new Ask(conversation, advertised));
+        Reply reply = model.answer(new Ask(conversation, advertised, label));
         int left = MAX_ROUNDS;
         while (true) {
             // BEFORE THE TOOL TEST, not after it. See MAX_ROUNDS: this ordering is the whole
@@ -135,7 +135,7 @@ public final class Asking implements Agent {
             for (Called call : reply.calls()) {
                 conversation.add(Said.result(call, ran(call)));
             }
-            reply = model.answer(new Ask(conversation, advertised));
+            reply = model.answer(new Ask(conversation, advertised, label));
         }
     }
 

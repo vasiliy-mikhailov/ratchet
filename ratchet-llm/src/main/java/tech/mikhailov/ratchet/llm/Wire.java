@@ -122,17 +122,17 @@ public final class Wire implements Chat {
     public Reply answer(Ask ask) {
         long began = System.currentTimeMillis();
         if (listening != null) {
-            listening.sending(ask.messages());
+            listening.sending(ask);
         }
         try {
             Reply reply = call(ask);
             if (listening != null) {
-                listening.back(ask.messages(), reply, System.currentTimeMillis() - began);
+                listening.back(ask, reply, System.currentTimeMillis() - began);
             }
             return reply;
         } catch (RuntimeException failed) {
             if (listening != null) {
-                listening.failed(ask.messages(), failed, System.currentTimeMillis() - began);
+                listening.failed(ask, failed, System.currentTimeMillis() - began);
             }
             throw failed;
         }
