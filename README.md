@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.4.1</version>
+  <version>0.7.0</version>
 </dependency>
 ```
 
@@ -67,10 +67,13 @@ the guard time since the last token rather than time since the request. `Asking`
 system prompt, a closed set of tools, a bounded tool loop. `Reasoning` reads the reasoning off the
 wire that the client would otherwise discard, and latches once when it starts repeating itself.
 `Listening` records every exchange as the client saw it. `Retrying` asks a dropped call again, up to
-`RATCHET_ATTEMPTS` times on Fibonacci seconds, because the journal only preserves a whole node and a
-reset halfway through one destroys every call that node already paid for. `Insisting` re-asks an
-agent that answered nothing — and sits above `Retrying`, so a dead connection is never read as an
-answer. `Recording` writes every tool call into the trace whole and returns it bounded.
+`RATCHET_ATTEMPTS` times, because the journal only preserves a whole node and a reset halfway
+through one destroys every call that node already paid for; the wait is a Fibonacci second plus a
+draw of up to `RATCHET_JITTER_SECONDS`, so a sweep's lanes do not all come back at the same instant,
+and `RATCHET_RETRY_BUDGET_MINUTES` bounds the whole sequence because a count of attempts does not —
+ten stalls is three and a half hours. `Insisting` re-asks an agent that answered nothing — and sits
+above `Retrying`, so a dead connection is never read as an answer. `Recording` writes every tool
+call into the trace whole and returns it bounded.
 
 ## The shortest working pipeline
 

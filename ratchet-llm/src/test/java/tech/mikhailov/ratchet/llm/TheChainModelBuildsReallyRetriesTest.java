@@ -1,5 +1,6 @@
 package tech.mikhailov.ratchet.llm;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,10 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code build} cannot be called without a live base URL and so nothing ever asserted what it
  * assembles. A guard that is correct and not connected is not a guard.
  *
- * <p>This asks the question the other file cannot: given the model {@code Model} actually builds,
- * does a dropped connection get asked again? It goes through the real {@link Streamed} and the real
- * {@link Pause}, so the one second it spends is the genuine first Fibonacci wait rather than a
- * recorded one.
+ * <p>This asks the question the other file cannot: given the chain {@code Model} actually assembles,
+ * does a dropped connection get asked again? It runs through the real {@link Streamed}, the real
+ * predicate and the real schedule. Only the three things that take wall-clock time — the jitter
+ * draw, the wait and the clock — are handed in, because the production draw is up to a minute wide
+ * and a test that lived through one would be a test somebody eventually deletes.
  */
 class TheChainModelBuildsReallyRetriesTest {
 
@@ -40,13 +42,14 @@ class TheChainModelBuildsReallyRetriesTest {
         Flaky endpoint = new Flaky(1);
         Notes notes = new Notes();
 
-        ChatResponse answer = Model.wrap(endpoint, notes).chat(ask());
+        Waits waits = new Waits();
+        ChatResponse answer = Model.wrap(endpoint, notes, () -> 0, waits, CLOCK).chat(ask());
 
         assertEquals("answer 2", answer.aiMessage().text(),
                 "the retry's answer, through the chain build() assembles");
         assertEquals(2, endpoint.calls.get(), "the endpoint really was asked twice");
-        assertTrue(notes.progress.stream().anyMatch(n -> n.contains("asking again in 1s")),
-                "and the first wait is the first Fibonacci second: " + notes.progress);
+        assertEquals(List.of(1L), waits.asked,
+                "and the wait is the first Fibonacci second, through the production schedule");
     }
 
     @Test
@@ -54,7 +57,8 @@ class TheChainModelBuildsReallyRetriesTest {
         Flaky endpoint = new Flaky(Integer.MAX_VALUE, "status code: 401, body: bad key");
         Notes notes = new Notes();
 
-        assertThrows(RuntimeException.class, () -> Model.wrap(endpoint, notes).chat(ask()));
+        assertThrows(RuntimeException.class,
+                () -> Model.wrap(endpoint, notes, () -> 0, new Waits(), CLOCK).chat(ask()));
 
         assertEquals(1, endpoint.calls.get(),
                 "the production predicate is wired in, not just the production count");
@@ -78,6 +82,46 @@ class TheChainModelBuildsReallyRetriesTest {
         assertEquals(1, Model.attemptsFrom("1"));
         assertEquals(1, Model.attemptsFrom("0"), "and nothing below one, which would ask zero times");
         assertEquals(1, Model.attemptsFrom("-4"));
+    }
+
+    @Test
+    void theProductionScheduleCarriesAJitterDrawOnTopOfEachFibonacciSecond() {
+        Flaky endpoint = new Flaky(3);
+        Waits waits = new Waits();
+
+        Model.wrap(endpoint, new Notes(), () -> 7, waits, CLOCK).chat(ask());
+
+        assertEquals(List.of(8L, 8L, 9L), waits.asked,
+                "1+7, 1+7, 2+7 — the draw is added to the schedule, not substituted for it");
+    }
+
+    @Test
+    void theWholeSequenceStopsAtTheBudgetHoweverManyAttemptsAreLeft() {
+        Flaky endpoint = new Flaky(Integer.MAX_VALUE);
+        // A clock that jumps eleven minutes every time it is read, standing in for an endpoint that
+        // freezes and costs a full stall per attempt. The thirty-minute budget is then spent long
+        // before the ten attempts are.
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
+        java.util.function.LongSupplier frozen = () -> clock.getAndAdd(Duration.ofMinutes(11).toMillis());
+
+        assertThrows(RuntimeException.class, () -> Model.wrap(endpoint, new Notes(), () -> 0,
+                new Waits(), frozen).chat(ask()));
+
+        assertEquals(3, endpoint.calls.get(),
+                "three attempts and not ten: a frozen endpoint must not cost ten stalls");
+    }
+
+    /** A clock that does not move, so the budget never fires in the tests that are not about it. */
+    private static final java.util.function.LongSupplier CLOCK = () -> 0L;
+
+    /** Records what it was asked to wait for, and returns at once. */
+    private static final class Waits implements Pause {
+        final List<Long> asked = new ArrayList<>();
+
+        @Override
+        public void of(java.time.Duration wait) {
+            asked.add(wait.toSeconds());
+        }
     }
 
     // ---------------------------------------------------------------- the fakes

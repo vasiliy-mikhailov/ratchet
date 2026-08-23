@@ -5,7 +5,7 @@
 
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-parent</artifactId>
-  <version>0.6.1</version>
+  <version>0.7.0</version>
   <packaging>pom</packaging>
 
   <name>ratchet</name>

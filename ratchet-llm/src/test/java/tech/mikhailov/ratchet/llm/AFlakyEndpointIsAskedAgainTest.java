@@ -145,8 +145,8 @@ class AFlakyEndpointIsAskedAgainTest {
         };
 
         assertThrows(IllegalStateException.class, () -> new Retrying(endpoint, 10,
-                Backoff.fibonacciSeconds(), interrupted, Retrying.transportFailures(), new Notes())
-                .chat(ask()));
+                Duration.ofMinutes(30), Backoff.fibonacciSeconds(), interrupted,
+                Retrying.transportFailures(), CLOCK, new Notes()).chat(ask()));
 
         assertEquals(1, endpoint.calls.get(), "a lane being stopped must stop, not serve out 88s");
         assertTrue(Thread.interrupted(), "and the interrupt is put back for whatever checks it next");
@@ -191,11 +191,48 @@ class AFlakyEndpointIsAskedAgainTest {
         assertNotEquals(0, endpoint.calls.get());
     }
 
+    @Test
+    void theScheduleIsHandedEveryFailureSoFarAndNotJustTheLast() {
+        Endpoint endpoint = new Endpoint(3);
+        List<List<String>> seen = new ArrayList<>();
+        Backoff watching = failed -> {
+            seen.add(failed.stream().map(Throwable::getMessage).toList());
+            return Duration.ZERO;
+        };
+
+        new Retrying(endpoint, 10, Duration.ofMinutes(30), watching, new Waits(),
+                Retrying.transportFailures(), CLOCK, new Notes()).chat(ask());
+
+        assertEquals(3, seen.size(), "consulted once before each retry");
+        assertEquals(List.of(1, 2, 3), seen.stream().map(List::size).toList(),
+                "and the history grows: one failure, then two, then three");
+        assertEquals(List.of("connection reset", "connection reset", "connection reset"),
+                seen.get(2), "the whole history, oldest first, not the last one repeated");
+    }
+
+    @Test
+    void theHistoryHandedOutCannotBeChangedFromOutside() {
+        Endpoint endpoint = new Endpoint(2);
+        Backoff meddling = failed -> {
+            assertThrows(UnsupportedOperationException.class, () -> failed.add(new RuntimeException("mine")),
+                    "a schedule must not be able to rewrite the run's own record of what happened");
+            return Duration.ZERO;
+        };
+
+        new Retrying(endpoint, 10, Duration.ofMinutes(30), meddling, new Waits(),
+                Retrying.transportFailures(), CLOCK, new Notes()).chat(ask());
+
+        assertEquals(3, endpoint.calls.get());
+    }
+
+    /** A clock that does not move, so the budget never fires in the tests that are not about it. */
+    private static final java.util.function.LongSupplier CLOCK = () -> 0L;
+
     // ---------------------------------------------------------------- the fakes
 
     private static ChatModel retrying(ChatModel inner, int attempts, Pause pause, Trace trace) {
-        return new Retrying(inner, attempts, Backoff.fibonacciSeconds(), pause,
-                Retrying.transportFailures(), trace);
+        return new Retrying(inner, attempts, Duration.ofMinutes(30), Backoff.fibonacciSeconds(),
+                pause, Retrying.transportFailures(), CLOCK, trace);
     }
 
     private static ChatRequest ask() {

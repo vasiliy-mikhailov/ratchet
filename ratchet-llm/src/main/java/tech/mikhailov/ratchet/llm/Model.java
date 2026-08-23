@@ -160,8 +160,49 @@ public final class Model {
      * here, where it is still recognisably a drop.
      */
     static ChatModel wrap(dev.langchain4j.model.chat.StreamingChatModel streaming, Trace trace) {
-        return new Retrying(new Streamed(streaming, trace), attempts(),
-                Backoff.fibonacciSeconds(), Pause.SLEEPING, Retrying.transportFailures(), trace);
+        return wrap(streaming, trace, Model::jitterSeconds, Pause.SLEEPING,
+                System::currentTimeMillis);
+    }
+
+    /**
+     * The same chain with the three things that take real time handed in.
+     *
+     * <p>Split out because the production draw is up to a minute wide, and a test that proved the
+     * chain by living through one real wait would take that minute — so it would either be deleted
+     * or the jitter would be quietly shrunk to keep it fast, and shrinking the jitter is the one
+     * change that silently undoes what it is for.
+     */
+    static ChatModel wrap(dev.langchain4j.model.chat.StreamingChatModel streaming, Trace trace,
+                          java.util.function.IntSupplier jitter, Pause pause,
+                          java.util.function.LongSupplier now) {
+        return new Retrying(new Streamed(streaming, trace), attempts(), budget(),
+                Backoff.jitteredBy(Backoff.fibonacciSeconds(), jitter),
+                pause, Retrying.transportFailures(), now, trace);
+    }
+
+    /**
+     * THE DRAW THAT KEEPS A SWEEP'S LANES APART, up to {@code RATCHET_JITTER_SECONDS}.
+     *
+     * <p>Every lane of a sweep talks to one endpoint and they fail together when it hiccups. On the
+     * bare schedule they would return together too. A minute is wide enough to spread eight lanes
+     * across the early waits, where the schedule itself is only a second or two apart.
+     */
+    static int jitterSeconds() {
+        int spread = attemptsFrom(setting("JITTER_SECONDS", "60"));
+        return java.util.concurrent.ThreadLocalRandom.current().nextInt(spread);
+    }
+
+    /**
+     * A WALL-CLOCK BOUND ON A WHOLE RETRY SEQUENCE, because a count of attempts bounds nothing.
+     *
+     * <p>Ten attempts against a frozen endpoint is ten stalls, and a stall is twenty minutes: three
+     * and a half hours in which a lane holds a slot, which is the thing {@link Streamed}'s ceiling
+     * exists to stop and cannot, because that ceiling is per attempt. Thirty minutes leaves every
+     * one of the ten attempts available to the failures that fail fast — the whole jittered
+     * schedule is about ten minutes at its worst — and stops the ones that hang.
+     */
+    static Duration budget() {
+        return Duration.ofMinutes(attemptsFrom(setting("RETRY_BUDGET_MINUTES", "30")));
     }
 
     /**

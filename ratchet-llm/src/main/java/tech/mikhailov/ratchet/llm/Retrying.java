@@ -1,6 +1,7 @@
 package tech.mikhailov.ratchet.llm;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -95,21 +96,36 @@ final class Retrying implements ChatModel {
 
     private final ChatModel inner;
     private final int attempts;
+    private final Duration budget;
     private final Backoff backoff;
     private final Pause pause;
     private final Predicate<Throwable> retryable;
+    private final java.util.function.LongSupplier now;
     private final Trace trace;
 
-    Retrying(ChatModel inner, int attempts, Backoff backoff, Pause pause,
-             Predicate<Throwable> retryable, Trace trace) {
+    /**
+     * @param attempts how many times the call is made before the stage is allowed to fail
+     * @param budget   a wall-clock bound on the WHOLE sequence, and the reason it exists is that a
+     *                 count of attempts does not bound anything on its own. A frozen endpoint costs
+     *                 a stall — twenty minutes by default — per attempt, so ten attempts is three
+     *                 and a half hours, and a lane that holds a slot that long is exactly what
+     *                 {@link Streamed}'s ceiling exists to prevent and cannot, because the ceiling
+     *                 is per attempt and this loop starts a new one. Fast failures still get every
+     *                 attempt; slow ones stop here.
+     * @param now      the clock, handed in so the budget has a test that does not take an hour
+     */
+    Retrying(ChatModel inner, int attempts, Duration budget, Backoff backoff, Pause pause,
+             Predicate<Throwable> retryable, java.util.function.LongSupplier now, Trace trace) {
         if (attempts < 1) {
             throw new IllegalArgumentException("attempts must be at least 1, not " + attempts);
         }
         this.inner = inner;
         this.attempts = attempts;
+        this.budget = budget;
         this.backoff = backoff;
         this.pause = pause;
         this.retryable = retryable;
+        this.now = now;
         this.trace = trace;
     }
 
@@ -120,16 +136,28 @@ final class Retrying implements ChatModel {
 
     @Override
     public ChatResponse doChat(ChatRequest request) {
-        RuntimeException last = null;
+        long deadline = now.getAsLong() + budget.toMillis();
+        // THE HISTORY, KEPT BECAUSE THE SCHEDULE IS ENTITLED TO SEE IT. A Backoff that can look at
+        // every failure so far can tell nine identical rate limits from nine different transport
+        // errors; one that is handed a count cannot, and has to answer both the same way.
+        List<Throwable> failures = new ArrayList<>();
         for (int attempt = 1; attempt <= attempts; attempt++) {
             try {
                 return inner.chat(request);
             } catch (RuntimeException failed) {
-                last = failed;
+                failures.add(failed);
                 if (attempt == attempts || !retryable.test(failed)) {
                     throw failed;
                 }
-                Duration wait = backoff.before(attempt + 1);
+                // THE BUDGET IS CHECKED AFTER THE CALL, NOT BEFORE IT. What overruns is almost
+                // never the waiting — it is the attempt itself, sitting on a stalled socket for
+                // twenty minutes. Asking before would let a call that has already spent the whole
+                // budget start another one.
+                if (now.getAsLong() >= deadline) {
+                    say(attempt, "spent " + budget.toMinutes() + "m of retries", failed);
+                    throw failed;
+                }
+                Duration wait = backoff.before(List.copyOf(failures));
                 // EVERY ATTEMPT IS IN THE RECORD, including the ones that worked in the end. A
                 // retry nobody can see is an endpoint whose flakiness never shows up anywhere, and
                 // the first anyone hears of it is a bill or a lane that takes an hour.
@@ -144,16 +172,21 @@ final class Retrying implements ChatModel {
         }
         // Unreachable: the loop either returns or throws. Thrown rather than returned null so a
         // future edit that breaks that cannot hand a caller an answer that does not exist.
-        throw last == null ? new IllegalStateException("no attempt was made") : last;
+        throw failures.isEmpty() ? new IllegalStateException("no attempt was made")
+                : (RuntimeException) failures.get(failures.size() - 1);
     }
 
     private void say(int attempt, Duration wait, RuntimeException failed) {
+        say(attempt, "asking again in " + wait.toSeconds() + "s", failed);
+    }
+
+    private void say(int attempt, String next, RuntimeException failed) {
         if (trace == null) {
             return;
         }
         try {
             trace.progress("", "model call failed on attempt " + attempt + " of " + attempts
-                    + " (" + failed.getMessage() + "); asking again in " + wait.toSeconds() + "s");
+                    + " (" + failed.getMessage() + "); " + next);
         } catch (RuntimeException recordingMustNotBreakTheRun) {
             // The same rule the rest of this package keeps: a trace that cannot be written is not
             // a reason to fail a call that might still succeed.
