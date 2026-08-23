@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.exception.RateLimitException;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -78,11 +79,11 @@ class AConsumerCanChooseItsOwnRetryTest {
 
     @Test
     void aConsumerCanSupplyItsOwnScheduleWhichIsWhereRetryAfterWouldGo() {
-        Flaky endpoint = new Flaky(2, "status code: 429, body: slow down");
+        Flaky endpoint = new Flaky(2, RateLimitException::new, "slow down");
         Waits waits = new Waits();
         // What a Retry-After-aware schedule looks like from outside this package.
         Backoff honoursTheServer = failed -> failed.get(failed.size() - 1)
-                .getMessage().contains("429") ? Duration.ofSeconds(90) : Duration.ofSeconds(1);
+                instanceof RateLimitException ? Duration.ofSeconds(90) : Duration.ofSeconds(1);
 
         Model.wrap(endpoint, new Notes(),
                 Retry.fromEnv().with(honoursTheServer).with(waits), CLOCK).chat(ask());
@@ -143,14 +144,16 @@ class AConsumerCanChooseItsOwnRetryTest {
     private static final class Flaky implements StreamingChatModel {
         final AtomicInteger calls = new AtomicInteger();
         private final int drops;
+        private final java.util.function.Function<String, RuntimeException> failure;
         private final String because;
 
         Flaky(int drops) {
-            this(drops, "connection reset");
+            this(drops, IllegalStateException::new, "connection reset");
         }
 
-        Flaky(int drops, String because) {
+        Flaky(int drops, java.util.function.Function<String, RuntimeException> failure, String because) {
             this.drops = drops;
+            this.failure = failure;
             this.because = because;
         }
 
@@ -158,7 +161,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
             int call = calls.incrementAndGet();
             if (call <= drops) {
-                handler.onError(new IllegalStateException(because));
+                handler.onError(failure.apply(because));
                 return;
             }
             handler.onPartialResponse("ans");

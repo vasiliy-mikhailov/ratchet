@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.exception.AuthenticationException;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
@@ -54,7 +55,7 @@ class TheChainModelBuildsReallyRetriesTest {
 
     @Test
     void aRefusedRequestIsNotRetriedByTheChainEither() {
-        Flaky endpoint = new Flaky(Integer.MAX_VALUE, "status code: 401, body: bad key");
+        Flaky endpoint = new Flaky(Integer.MAX_VALUE, AuthenticationException::new, "bad key");
         Notes notes = new Notes();
 
         assertThrows(RuntimeException.class,
@@ -140,14 +141,16 @@ class TheChainModelBuildsReallyRetriesTest {
     private static final class Flaky implements StreamingChatModel {
         final AtomicInteger calls = new AtomicInteger();
         private final int drops;
+        private final java.util.function.Function<String, RuntimeException> failure;
         private final String because;
 
         Flaky(int drops) {
-            this(drops, "connection reset");
+            this(drops, IllegalStateException::new, "connection reset");
         }
 
-        Flaky(int drops, String because) {
+        Flaky(int drops, java.util.function.Function<String, RuntimeException> failure, String because) {
             this.drops = drops;
+            this.failure = failure;
             this.because = because;
         }
 
@@ -155,7 +158,7 @@ class TheChainModelBuildsReallyRetriesTest {
         public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
             int call = calls.incrementAndGet();
             if (call <= drops) {
-                handler.onError(new IllegalStateException(because));
+                handler.onError(failure.apply(because));
                 return;
             }
             handler.onPartialResponse("ans");

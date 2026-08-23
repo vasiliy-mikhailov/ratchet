@@ -6,6 +6,10 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.exception.AuthenticationException;
+import dev.langchain4j.exception.HttpException;
+import dev.langchain4j.exception.InvalidRequestException;
+import dev.langchain4j.exception.RateLimitException;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -16,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import tech.mikhailov.ratchet.record.Trace;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -102,14 +107,52 @@ class AFlakyEndpointIsAskedAgainTest {
 
     @Test
     void aRefusedRequestIsNotRetriedNineMoreTimes() {
-        Thrower endpoint = new Thrower(() -> new IllegalStateException("status code: 401, body: bad key"));
+        Thrower endpoint = new Thrower(() -> new AuthenticationException("bad key"));
         Waits waits = new Waits();
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(AuthenticationException.class,
                 () -> retrying(endpoint, 10, waits, new Notes()).chat(ask()));
 
         assertEquals(1, endpoint.calls.get(),
                 "nine more attempts cannot fix a credential, and each re-prefills the conversation");
+    }
+
+    @Test
+    void aRateLimitIsRetriedAndAnInvalidRequestIsNot() {
+        // The two sit either side of the line, and both are types rather than sentences.
+        assertTrue(Retrying.transportFailures().test(new RateLimitException("slow down")));
+        assertFalse(Retrying.transportFailures().test(new InvalidRequestException("no such field")));
+        assertTrue(Retrying.transportFailures().test(new HttpException(503, "unavailable")),
+                "an unmapped 5xx is still worth another request");
+        assertFalse(Retrying.transportFailures().test(new HttpException(404, "no such model")),
+                "and an unmapped 404 still is not");
+        assertTrue(Retrying.transportFailures().test(new HttpException(429, "rate limited")),
+                "429 and 408 are the server saying not now, not that the request is wrong");
+    }
+
+    @Test
+    void theOutermostClassificationWinsOverWhateverItWraps() {
+        // What the RetriableException branch is actually FOR. Without it the walk would reach the
+        // cause and refuse, so the branch is the difference between "the client says this is worth
+        // another go" and "something permanent-looking is buried in the chain".
+        RuntimeException retriableAroundPermanent =
+                new RateLimitException("slow down", new AuthenticationException("stale token"));
+        assertTrue(Retrying.transportFailures().test(retriableAroundPermanent),
+                "the client classified the failure itself; a cause underneath does not overrule it");
+
+        // And the mirror: permanent on the outside is permanent, whatever it wraps.
+        RuntimeException permanentAroundRetriable =
+                new AuthenticationException("bad key", new RateLimitException("slow down"));
+        assertFalse(Retrying.transportFailures().test(permanentAroundRetriable));
+    }
+
+    @Test
+    void aMessageThatMerelyQuotesAStatusIsNotAClassification() {
+        // The bug this replaced: a 500 whose body quoted a 401 was read as permanent and never
+        // retried, and a refusal phrased any other way was retried nine times.
+        assertTrue(Retrying.transportFailures()
+                        .test(new IllegalStateException("upstream returned 500: token 401 rejected")),
+                "prose is not a status; an unrecognised failure is retried");
     }
 
     @Test

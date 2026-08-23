@@ -13,6 +13,10 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
 
+import dev.langchain4j.exception.HttpException;
+import dev.langchain4j.exception.NonRetriableException;
+import dev.langchain4j.exception.RetriableException;
+
 import tech.mikhailov.ratchet.record.Trace;
 
 /**
@@ -40,37 +44,41 @@ import tech.mikhailov.ratchet.record.Trace;
 final class Retrying implements ChatModel {
 
     /**
-     * WHAT IS WORTH ASKING AGAIN.
+     * WHAT IS WORTH ASKING AGAIN, DECIDED ON TYPES AND A STATUS CODE.
      *
-     * <p>A transport failure is worth retrying because the next attempt may well land. Three things
-     * are not:
+     * <p>This used to read the exception's MESSAGE and look for "401" in it, which was wrong in both
+     * directions: a 500 whose body happened to quote a 401 was treated as permanent, and a refusal
+     * phrased any other way was retried nine times. The client has carried the answer as types all
+     * along — {@code NonRetriableException} covers authentication, an invalid request and a model
+     * that does not exist, {@code RetriableException} covers rate limits, timeouts and 5xx — and
+     * {@code HttpException} carries {@link dev.langchain4j.exception.HttpException#statusCode()}.
      *
-     * <ul>
-     * <li>{@link Streamed.GaveUp}, the total ceiling. It fires only on a stream that IS producing
-     *     and has been producing for hours; the lane is being handed back deliberately, and asking
-     *     again would spend another ceiling doing it.
-     * <li>An interruption. The lane is being stopped, and a retry would add the rest of the
-     *     schedule to every stop.
-     * <li>A refusal by the endpoint to accept the request at all — a bad key, a model name it does
-     *     not have. Nine more attempts cannot fix a credential, and each one re-prefills the whole
-     *     conversation to be told the same thing.
-     * </ul>
+     * <p>BOTH ARE CHECKED, because the mapping from status to type happens in an {@code internal}
+     * package this library will not depend on, and there is no promise it has run by the time a
+     * streaming error reaches here. If it did, the type answers; if it did not, the status does.
      *
-     * <p>The stall IS retried: a connection that has gone silent for twenty minutes is exactly the
-     * case a fresh connection fixes.
+     * <p>Two more are refused for reasons of this library's own: {@link Streamed.GaveUp}, the total
+     * ceiling, which fires on a stream that IS producing and is handing the slot back on purpose,
+     * and an interruption, because a lane being stopped must stop rather than serve out the
+     * schedule.
+     *
+     * <p>Anything unrecognised is RETRIED. The cost of retrying something hopeless is one bounded
+     * sequence; the cost of not retrying something transient is a whole stage.
      */
     static Predicate<Throwable> transportFailures() {
         return failure -> {
-            if (failure instanceof Streamed.GaveUp) {
-                return false;
-            }
             for (Throwable at = failure; at != null; at = at.getCause()) {
-                if (at instanceof InterruptedException) {
+                if (at instanceof Streamed.GaveUp || at instanceof InterruptedException) {
                     return false;
                 }
-                String said = at.getMessage();
-                if (said != null && refusedOutright(said)) {
+                if (at instanceof NonRetriableException) {
                     return false;
+                }
+                if (at instanceof RetriableException) {
+                    return true;
+                }
+                if (at instanceof HttpException http) {
+                    return worthAnotherRequest(http.statusCode());
                 }
                 if (at.getCause() == at) {
                     break;
@@ -81,17 +89,13 @@ final class Retrying implements ChatModel {
     }
 
     /**
-     * A REFUSAL READ OFF THE MESSAGE, WHICH IS NOT WHERE IT SHOULD BE READ FROM.
+     * A status that a second identical request could answer differently.
      *
-     * <p>The client throws one type for every HTTP failure and puts the status in the text, so
-     * there is nothing better to match on until it does otherwise. Kept deliberately narrow: only
-     * the codes that no amount of waiting changes. Anything unrecognised is retried, because the
-     * cost of retrying something hopeless is a bounded eighty-eight seconds and the cost of NOT
-     * retrying something transient is a whole stage.
+     * <p>408 and 429 are the server saying "not now"; 5xx is the server failing. Every other 4xx is
+     * the server saying the request itself is wrong, and sending it again unchanged cannot help.
      */
-    private static boolean refusedOutright(String said) {
-        return said.contains("401") || said.contains("403") || said.contains("404")
-                || said.contains("400");
+    private static boolean worthAnotherRequest(int status) {
+        return status == 408 || status == 429 || status >= 500;
     }
 
     private final ChatModel inner;
