@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.9.0</version>
+  <version>0.10.0</version>
 </dependency>
 ```
 
@@ -61,7 +61,8 @@ for whether this attempt may pick a killed one up.
 `tech.mikhailov.ratchet.config` is what the run was told before the code started: `Env`, and
 `Prompts`, an on-disk store whose text replaces the code's own, per agent and per variant.
 
-`tech.mikhailov.ratchet.llm` is the langchain4j artifact. `Model` builds the client, with a
+`tech.mikhailov.ratchet.llm` is the langchain4j artifact. `Endpoint` is where the model is, as a
+value you can hand in rather than three environment variables a launcher has to rename. `Model` builds the client, with a
 thinking budget and a patience that is deliberately never the guard that fires. `Streamed` makes
 the guard time since the last token rather than time since the request. `Asking` is one agent: a
 system prompt, a closed set of tools, a bounded tool loop. `Reasoning` reads the reasoning off the
@@ -80,6 +81,9 @@ call into the trace whole and returns it bounded.
 `Model.forProducer(trace)` takes the shipped policy. `Model.forProducer(trace, retry)` takes yours:
 
 ```java
+Model.forProducer(trace, Endpoint.of(base, model));   // point it where YOU keep your endpoint
+Model.forProducer(trace, endpoint, retry);           // and choose the retry too
+
 Model.forProducer(trace, Retry.fibonacciSeconds());   // the shipped shape, named: 10 attempts,
                                                      // 1 1 2 3 5 8 13 21 34 + a draw, 30m budget
 Model.forProducer(trace, Retry.fibonacciSeconds(3)); // the same, three attempts

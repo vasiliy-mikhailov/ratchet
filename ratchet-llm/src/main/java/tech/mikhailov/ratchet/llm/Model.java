@@ -77,11 +77,34 @@ public final class Model {
 
     /** Producers and critics share a configuration; what differs is what the chain does with them. */
     public static ChatModel forProducer(Trace trace) {
-        return forProducer(trace, Retry.fromEnv());
+        return forProducer(trace, Endpoint.fromEnv(), Retry.fromEnv());
     }
 
     public static ChatModel forCritic(Trace trace) {
-        return forCritic(trace, Retry.fromEnv());
+        return forCritic(trace, Endpoint.fromEnv(), Retry.fromEnv());
+    }
+
+    /**
+     * The same model, pointed where the caller says rather than where the environment says.
+     *
+     * <p>For a consumer whose credentials are named something else — every sibling repository keeps
+     * them as {@code LLM_BASE_URL} and needs a launcher to rename them — and for a pipeline that
+     * wants a cheap model for extraction and a better one for judgement in the same process.
+     */
+    public static ChatModel forProducer(Trace trace, Endpoint endpoint) {
+        return forProducer(trace, endpoint, Retry.fromEnv());
+    }
+
+    public static ChatModel forCritic(Trace trace, Endpoint endpoint) {
+        return forCritic(trace, endpoint, Retry.fromEnv());
+    }
+
+    public static ChatModel forProducer(Trace trace, Endpoint endpoint, Retry retry) {
+        return build(trace, true, endpoint, retry);
+    }
+
+    public static ChatModel forCritic(Trace trace, Endpoint endpoint, Retry retry) {
+        return build(trace, true, endpoint, retry);
     }
 
     /**
@@ -92,11 +115,11 @@ public final class Model {
      * wants to test its own pipeline without living through a real wait. See {@link Retry}.
      */
     public static ChatModel forProducer(Trace trace, Retry retry) {
-        return build(trace, true, retry);
+        return build(trace, true, Endpoint.fromEnv(), retry);
     }
 
     public static ChatModel forCritic(Trace trace, Retry retry) {
-        return build(trace, true, retry);
+        return build(trace, true, Endpoint.fromEnv(), retry);
     }
 
     /**
@@ -110,28 +133,23 @@ public final class Model {
      * 340 tokens and 17 seconds.
      */
     public static ChatModel forRetry(Trace trace) {
-        return forRetry(trace, Retry.fromEnv());
+        return forRetry(trace, Endpoint.fromEnv(), Retry.fromEnv());
     }
 
     public static ChatModel forRetry(Trace trace, Retry retry) {
-        return build(trace, false, retry);
+        return build(trace, false, Endpoint.fromEnv(), retry);
     }
 
-    private static ChatModel build(Trace trace, boolean thinking, Retry retry) {
-        String base = setting("BASE", null);
-        if (base == null) {
-            throw new IllegalStateException(
-                    "RATCHET_BASE must be set to an OpenAI-compatible chat endpoint");
-        }
-        String model = setting("MODEL", null);
-        if (model == null) {
-            throw new IllegalStateException("RATCHET_MODEL must be set");
-        }
+    public static ChatModel forRetry(Trace trace, Endpoint endpoint, Retry retry) {
+        return build(trace, false, endpoint, retry);
+    }
+
+    private static ChatModel build(Trace trace, boolean thinking, Endpoint endpoint, Retry retry) {
         // The same first-non-blank chain as setting(), spelt with Env's own truth rules so there
         // is one place that decides what "yes" means.
         boolean wantThinking = thinking && Env.flag("RATCHET_THINKING",
                 Env.flag("OC_THINKING", Env.flag("BJV_THINKING", true)));
-        HttpClient.Version version = base.startsWith("https://")
+        HttpClient.Version version = endpoint.secure()
                 ? HttpClient.Version.HTTP_2
                 : HttpClient.Version.HTTP_1_1;
         var jdk = new JdkHttpClientBuilder()
@@ -144,9 +162,9 @@ public final class Model {
                 // The reasoning is read off the deltas, because the server names the field
                 // `reasoning` and the client looks for `reasoning_content` on this path too.
                 .httpClientBuilder(trace == null ? jdk : Reasoning.tee(jdk, trace))
-                .baseUrl(base)
-                .apiKey(setting("KEY", ""))
-                .modelName(model)
+                .baseUrl(endpoint.base())
+                .apiKey(endpoint.key())
+                .modelName(endpoint.model())
                 .temperature(0.0)
                 .maxTokens(MAX_TOKENS)
                 .timeout(PATIENCE)
@@ -291,7 +309,7 @@ public final class Model {
      * rename that ended the sweep. The new name wins when both are set, so a consumer moves one
      * variable at a time and can see which one is in force.
      */
-    private static String setting(String name, String fallback) {
+    static String setting(String name, String fallback) {
         String value = Env.get("RATCHET_" + name);
         if (value == null) {
             value = Env.get("OC_" + name);
