@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import dev.langchain4j.exception.RateLimitException;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -32,16 +34,18 @@ class TheRetryScheduleIsFibonacciTest {
 
     @Test
     void theScheduleCanSeeWhatWentWrongAndNotOnlyHowOften() {
+        // Written on types, because this is the shape a consumer copies. Reading a status out of
+        // an exception's prose is what 0.8.1 removed from this library, and an example that did it
+        // anyway would put it straight back into the next consumer.
         Backoff readsTheHistory = failed -> {
-            boolean allTheSame = failed.stream()
-                    .map(t -> String.valueOf(t.getMessage())).distinct().count() == 1;
-            return Duration.ofSeconds(allTheSame && failed.size() >= 3 ? 300 : 1);
+            boolean allRateLimits = failed.stream().allMatch(t -> t instanceof RateLimitException);
+            return Duration.ofSeconds(allRateLimits && failed.size() >= 3 ? 300 : 1);
         };
 
         List<Throwable> sameRefusalThrice = List.of(
-                new IllegalStateException("status code: 429"),
-                new IllegalStateException("status code: 429"),
-                new IllegalStateException("status code: 429"));
+                new RateLimitException("slow down"),
+                new RateLimitException("slow down"),
+                new RateLimitException("slow down"));
 
         assertEquals(300, readsTheHistory.before(sameRefusalThrice).toSeconds(),
                 "one rate limit repeating is a different situation from three unrelated drops");

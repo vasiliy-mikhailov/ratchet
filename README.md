@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.8.1</version>
+  <version>0.8.2</version>
 </dependency>
 ```
 
