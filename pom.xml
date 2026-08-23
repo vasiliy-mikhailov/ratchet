@@ -5,7 +5,7 @@
 
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-parent</artifactId>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
   <packaging>pom</packaging>
 
   <name>ratchet</name>
@@ -51,8 +51,9 @@
   </issueManagement>
 
   <!-- TWO MODULES, SPLIT BY DEPENDENCY AND NOT BY THEME. ratchet-core imports nothing outside the
-       JDK; ratchet-llm imports langchain4j and nothing else. A consumer that wants the
-       journal and the record does not have to take a model client with it, and the split is
+       JDK, and as of 0.13.0 neither does ratchet-llm. The split survives the reason it was drawn:
+       core is the journal, the flow and the record; llm is everything that knows an endpoint
+       exists. A consumer that wants the first does not compile against the second, and that is
        checked by the compiler rather than by a convention. -->
   <modules>
     <module>ratchet-core</module>
@@ -69,7 +70,6 @@
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <langchain4j.version>1.9.1</langchain4j.version>
     <junit.version>5.11.4</junit.version>
     <surefire.version>3.2.5</surefire.version>
     <source.plugin.version>3.3.1</source.plugin.version>
@@ -77,32 +77,19 @@
     <gpg.plugin.version>3.2.7</gpg.plugin.version>
   </properties>
 
-  <!-- EVERY VERSION IS DECIDED HERE, and nothing here is imposed on a consumer. langchain4j drags
-       jackson and opennlp in transitively; this pom deliberately does not pin them. A library that
-       manages its consumer transitives takes the pin away from the consumer, and the consumer is
-       the one who has to answer for a CVE. bump-java-version pins both in its own parent, where a
-       dependencyManagement entry beats any transitive, and that is where the decision belongs. -->
+  <!-- EVERY VERSION IS DECIDED HERE, AND THERE IS ALMOST NOTHING LEFT TO DECIDE. This block used
+       to pin a model client that dragged jackson, opennlp and a BPE tokenizer in behind it — 13
+       jars and 7.9 MB, inherited by every consumer who wanted so much as the retry schedule. The
+       paragraph that stood here explained why this pom would not pin those transitives: a library
+       that manages its consumer's transitives takes the pin away from the consumer, and the
+       consumer is the one who has to answer for a CVE. That reasoning was right and the better
+       answer was to stop shipping the transitives at all. What is left is junit. -->
   <dependencyManagement>
     <dependencies>
       <dependency>
         <groupId>tech.mikhailov.ratchet</groupId>
         <artifactId>ratchet-core</artifactId>
         <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>dev.langchain4j</groupId>
-        <artifactId>langchain4j</artifactId>
-        <version>${langchain4j.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>dev.langchain4j</groupId>
-        <artifactId>langchain4j-open-ai</artifactId>
-        <version>${langchain4j.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>dev.langchain4j</groupId>
-        <artifactId>langchain4j-http-client-jdk</artifactId>
-        <version>${langchain4j.version}</version>
       </dependency>
       <dependency>
         <groupId>org.junit.jupiter</groupId>

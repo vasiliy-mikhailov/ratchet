@@ -3,19 +3,7 @@ package tech.mikhailov.ratchet.llm;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.function.Predicate;
-
-import dev.langchain4j.model.chat.Capability;
-import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.chat.listener.ChatModelListener;
-import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.request.ChatRequestParameters;
-import dev.langchain4j.model.chat.response.ChatResponse;
-
-import dev.langchain4j.exception.HttpException;
-import dev.langchain4j.exception.NonRetriableException;
-import dev.langchain4j.exception.RetriableException;
 
 import tech.mikhailov.ratchet.record.Trace;
 
@@ -41,10 +29,10 @@ import tech.mikhailov.ratchet.record.Trace;
  * ten-attempt schedule can be asserted in milliseconds. {@link Model} is the only place that
  * chooses the production values.
  */
-public final class Retrying implements ChatModel {
+public final class Retrying implements Chat {
 
     /**
-     * WRAP A {@link ChatModel} YOU ALREADY HAVE.
+     * WRAP A {@link Chat} YOU ALREADY HAVE.
      *
      * <p>The door two consumers asked for, in ratchet#2 and ratchet#5, and the reason both gave is
      * the same: {@link Model} builds the client itself, and a consumer that resolves its endpoint
@@ -56,30 +44,41 @@ public final class Retrying implements ChatModel {
      * another attempt is harder to get right than the loop around it. That judgement is
      * {@link #transportFailures()}, and it is public for the same reason.
      */
-    public static ChatModel on(ChatModel around, Retry retry, Trace trace) {
+    public static Chat on(Chat around, Retry retry, Trace trace) {
         return new Retrying(around, retry.attempts(), retry.budget(), retry.backoff(),
                 retry.pause(), retry.worthRetrying(), retry.now(), trace);
     }
 
-
     /**
-     * WHAT IS WORTH ASKING AGAIN, DECIDED ON TYPES AND A STATUS CODE.
+     * WHAT IS WORTH ASKING AGAIN — NOW ONE STATUS CODE AND FOUR REFUSALS.
      *
-     * <p>This used to read the exception's MESSAGE and look for "401" in it, which was wrong in both
+     * <p>This has been through three shapes and the arithmetic of each is worth keeping. It began by
+     * reading the exception's MESSAGE and looking for "401" in it, which was wrong in both
      * directions: a 500 whose body happened to quote a 401 was treated as permanent, and a refusal
-     * phrased any other way was retried nine times. The client has carried the answer as types all
-     * along — {@code NonRetriableException} covers authentication, an invalid request and a model
-     * that does not exist, {@code RetriableException} covers rate limits, timeouts and 5xx — and
-     * {@code HttpException} carries {@link dev.langchain4j.exception.HttpException#statusCode()}.
+     * phrased any other way was retried nine times. It then tested a client's typed hierarchy AND a
+     * raw status code, because the mapping between them ran in an {@code internal} package this
+     * library would not depend on, with no promise it had run by the time a streaming error arrived.
+     * Now the client is this library's, {@link Refused} carries the status it read off the response,
+     * and the whole judgement is one comparison.
      *
-     * <p>BOTH ARE CHECKED, because the mapping from status to type happens in an {@code internal}
-     * package this library will not depend on, and there is no promise it has run by the time a
-     * streaming error reaches here. If it did, the type answers; if it did not, the status does.
+     * <p>FOUR THINGS ARE REFUSED, each for its own reason:
      *
-     * <p>Two more are refused for reasons of this library's own: {@link Streamed.GaveUp}, the total
-     * ceiling, which fires on a stream that IS producing and is handing the slot back on purpose,
-     * and an interruption, because a lane being stopped must stop rather than serve out the
-     * schedule.
+     * <ul>
+     * <li>{@link GaveUp} — the total ceiling, which fires on a stream that IS producing and is
+     *     handing the slot back on purpose.
+     * <li>{@link Truncated} — the identical request meets the identical budget, so ten attempts buy
+     *     ten more full generations and the same empty answer.
+     * <li>{@link Reasoning.LoopDetected} — greedy decoding cannot leave a cycle it has entered. ONE
+     *     experiment restarted 14 trapped generations with 2,500 more tokens each and none escaped.
+     *     <strong>This is new, and it is new because it used to be impossible.</strong> The
+     *     detection was thrown out of an SSE listener, and the client swallowed it there — it never
+     *     reached this class at all. A client this library owns lets it through, so for the first
+     *     time the retry has to have an opinion about it, and the opinion is no: what follows is
+     *     {@link Insisting}, which re-asks with thinking off, and thinking off measured 0 of 10
+     *     runaway against a 62.5% control.
+     * <li>An interruption, because a lane being stopped must stop rather than serve out the
+     *     schedule.
+     * </ul>
      *
      * <p>Anything unrecognised is RETRIED. The cost of retrying something hopeless is one bounded
      * sequence; the cost of not retrying something transient is a whole stage.
@@ -87,22 +86,13 @@ public final class Retrying implements ChatModel {
     public static Predicate<Throwable> transportFailures() {
         return failure -> {
             for (Throwable at = failure; at != null; at = at.getCause()) {
-                if (at instanceof Streamed.GaveUp || at instanceof InterruptedException) {
+                if (at instanceof GaveUp || at instanceof Truncated
+                        || at instanceof Reasoning.LoopDetected
+                        || at instanceof InterruptedException) {
                     return false;
                 }
-                // A TRUNCATION IS NOT TRANSIENT. The identical request meets the identical budget,
-                // so ten attempts buy ten more full generations and the same empty answer.
-                if (at instanceof Streamed.Truncated) {
-                    return false;
-                }
-                if (at instanceof NonRetriableException) {
-                    return false;
-                }
-                if (at instanceof RetriableException) {
-                    return true;
-                }
-                if (at instanceof HttpException http) {
-                    return worthAnotherRequest(http.statusCode());
+                if (at instanceof Refused refused) {
+                    return worthAnotherRequest(refused.status());
                 }
                 if (at.getCause() == at) {
                     break;
@@ -122,7 +112,7 @@ public final class Retrying implements ChatModel {
         return status == 408 || status == 429 || status >= 500;
     }
 
-    private final ChatModel inner;
+    private final Chat inner;
     private final int attempts;
     private final Duration budget;
     private final Backoff backoff;
@@ -137,12 +127,12 @@ public final class Retrying implements ChatModel {
      *                 count of attempts does not bound anything on its own. A frozen endpoint costs
      *                 a stall — twenty minutes by default — per attempt, so ten attempts is three
      *                 and a half hours, and a lane that holds a slot that long is exactly what
-     *                 {@link Streamed}'s ceiling exists to prevent and cannot, because the ceiling
-     *                 is per attempt and this loop starts a new one. Fast failures still get every
+     *                 {@link Watch#ceiling()} exists to prevent and cannot, because the ceiling is
+     *                 per attempt and this loop starts a new one. Fast failures still get every
      *                 attempt; slow ones stop here.
      * @param now      the clock, handed in so the budget has a test that does not take an hour
      */
-    Retrying(ChatModel inner, int attempts, Duration budget, Backoff backoff, Pause pause,
+    Retrying(Chat inner, int attempts, Duration budget, Backoff backoff, Pause pause,
              Predicate<Throwable> retryable, Now now, Trace trace) {
         if (attempts < 1) {
             throw new IllegalArgumentException("attempts must be at least 1, not " + attempts);
@@ -158,12 +148,7 @@ public final class Retrying implements ChatModel {
     }
 
     @Override
-    public ChatResponse chat(ChatRequest request) {
-        return doChat(request);
-    }
-
-    @Override
-    public ChatResponse doChat(ChatRequest request) {
+    public Reply answer(Ask ask) {
         long deadline = now.millis() + budget.toMillis();
         // THE HISTORY, KEPT BECAUSE THE SCHEDULE IS ENTITLED TO SEE IT. A Backoff that can look at
         // every failure so far can tell nine identical rate limits from nine different transport
@@ -171,7 +156,7 @@ public final class Retrying implements ChatModel {
         List<Throwable> failures = new ArrayList<>();
         for (int attempt = 1; attempt <= attempts; attempt++) {
             try {
-                return inner.chat(request);
+                return inner.answer(ask);
             } catch (RuntimeException failed) {
                 failures.add(failed);
                 if (attempt == attempts || !retryable.test(failed)) {
@@ -219,20 +204,5 @@ public final class Retrying implements ChatModel {
             // The same rule the rest of this package keeps: a trace that cannot be written is not
             // a reason to fail a call that might still succeed.
         }
-    }
-
-    @Override
-    public List<ChatModelListener> listeners() {
-        return inner.listeners();
-    }
-
-    @Override
-    public ChatRequestParameters defaultRequestParameters() {
-        return inner.defaultRequestParameters();
-    }
-
-    @Override
-    public Set<Capability> supportedCapabilities() {
-        return inner.supportedCapabilities();
     }
 }

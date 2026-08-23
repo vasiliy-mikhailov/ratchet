@@ -5,8 +5,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import dev.langchain4j.exception.RateLimitException;
-
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,6 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * hand test. A rule that produced the wrong ninth wait would be a rule that only misbehaves during
  * an outage, which is the worst possible time to find out. So the whole schedule is asserted here
  * as a list of numbers, and {@link Backoff} is a pure function precisely so that it can be.
+ *
+ * <p>THE FAILURES IN THE HISTORY ARE THIS LIBRARY'S OWN NOW. They used to be another client's
+ * exception hierarchy, which meant an example of a schedule reading its history had to reach into
+ * somebody else's types to say "rate limit". {@link Refused} carries the status its own client read
+ * off the response, so the example below is a comparison on a number and nothing else changed:
+ * {@code Backoff} never knew what the throwables were, only how many and in what order.
  */
 class TheRetryScheduleIsFibonacciTest {
 
@@ -36,16 +40,19 @@ class TheRetryScheduleIsFibonacciTest {
     void theScheduleCanSeeWhatWentWrongAndNotOnlyHowOften() {
         // Written on types, because this is the shape a consumer copies. Reading a status out of
         // an exception's prose is what 0.8.1 removed from this library, and an example that did it
-        // anyway would put it straight back into the next consumer.
+        // anyway would put it straight back into the next consumer. There is nothing left to read
+        // prose out of: Refused.status() is the number the client took off the response, and this
+        // same one comparison is all Retrying.transportFailures() asks of a refusal.
         Backoff readsTheHistory = failed -> {
-            boolean allRateLimits = failed.stream().allMatch(t -> t instanceof RateLimitException);
+            boolean allRateLimits = failed.stream()
+                    .allMatch(t -> t instanceof Refused refused && refused.status() == 429);
             return Duration.ofSeconds(allRateLimits && failed.size() >= 3 ? 300 : 1);
         };
 
         List<Throwable> sameRefusalThrice = List.of(
-                new RateLimitException("slow down"),
-                new RateLimitException("slow down"),
-                new RateLimitException("slow down"));
+                new Refused(429, "slow down"),
+                new Refused(429, "slow down"),
+                new Refused(429, "slow down"));
 
         assertEquals(300, readsTheHistory.before(sameRefusalThrice).toSeconds(),
                 "one rate limit repeating is a different situation from three unrelated drops");

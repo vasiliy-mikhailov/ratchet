@@ -1,14 +1,8 @@
 package tech.mikhailov.ratchet.llm;
 
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.model.chat.listener.ChatModelErrorContext;
-import dev.langchain4j.model.chat.listener.ChatModelListener;
-import dev.langchain4j.model.chat.listener.ChatModelRequestContext;
-import dev.langchain4j.model.chat.listener.ChatModelResponseContext;
-
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import tech.mikhailov.ratchet.record.Trace;
@@ -16,17 +10,17 @@ import tech.mikhailov.ratchet.record.Trace;
 /**
  * EVERY EXCHANGE WITH THE MODEL, RECORDED WHERE IT HAPPENS.
  *
- * <p>The trace was assembled by the harness calling {@code trace.asked(...)} at the points it
- * remembered to. That is a curated record: it holds what somebody decided was worth keeping, and it
- * is silent about everything else. Three things one corpus needed were missing from it for exactly
- * that reason. Token counts, so the thinking budget could be checked against what the server
- * actually spent rather than against a character count. Which agent produced a piece of reasoning,
- * since {@code thought} events carry none and 737 of them in one sweep attributed to nobody. And
- * every call that failed before the harness got as far as recording an answer.
+ * <p>The trace used to be assembled by the harness calling {@code trace.asked(...)} at the points
+ * it remembered to. That is a curated record: it holds what somebody decided was worth keeping and
+ * is silent about everything else. Three things one corpus needed were missing for exactly that
+ * reason. Token counts, so the thinking budget could be checked against what the server actually
+ * spent rather than against a character count. Which agent produced a piece of reasoning, since
+ * {@code thought} events carry none and 737 of them in one sweep attributed to nobody. And every
+ * call that failed before the harness got as far as recording an answer.
  *
- * <p>A listener sits under all of that. langchain4j hands it the request as sent and the response
- * as received, including the calls that error, so the record becomes what HAPPENED rather than what
- * was saved.
+ * <p>This sat under all of that as a listener the client called. It is now called by {@link Wire}
+ * directly, which changes nothing about what is written and removes the one thing that was
+ * genuinely awkward: a listener interface whose contexts were the only route to the token counts.
  *
  * <p>SUMMARISED, NOT DUMPED. Each request carries the whole conversation so far, and this corpus
  * has already measured a prompt growing monotonically to 428K tokens; writing every request in full
@@ -34,22 +28,25 @@ import tech.mikhailov.ratchet.record.Trace;
  * messages went, the tail of what was new, what came back, which tools were asked for, why the
  * generation stopped, what it cost.
  */
-public final class Listening implements ChatModelListener {
+public final class Listening {
 
     /**
-     * WHICH AGENT IS SPEAKING, WITHOUT A THREAD-LOCAL.
+     * WHICH AGENT IS SPEAKING, WITHOUT A THREAD-LOCAL AND WITHOUT A FIELD ON THE CLIENT.
      *
-     * <p>Two models serve every agent in the flow, so the listener cannot be told the name when it
-     * is built, and the streaming path makes a thread-local a guess rather than a fact. What is
-     * reliable is the system message: every agent's prompt is distinct, and it travels with the
-     * request. Registering them at definition time turns identity into a lookup.
+     * <p>ONE CLIENT SERVES EVERY AGENT IN THE FLOW — eight of them in the sample pipeline against a
+     * single producer — so the client cannot be told the name when it is built, and doing it that
+     * way would reproduce the exact bug this lookup exists to fix rather than remove it. A
+     * thread-local is a guess once the transport has its own thread.
      *
-     * <p>REGISTRATION IS EXPLICIT, AND IT IS THE ONE THING A CONSUMER MUST NOT FORGET. {@code
-     * Asking} could register itself, and then nobody could get this wrong; it does not, because it
-     * is built with a LABEL and a consumer registers under a NAME, and the two are not the same
-     * string. Auto-registering would silently rewrite the agent column of every exchange row a
-     * corpus already holds. Call this once per agent, or every exchange is attributed to nobody:
-     * 737 of them in one sweep were.
+     * <p>What is reliable is the system message: every agent's prompt is distinct and it travels
+     * with the request. Registering them at definition time turns identity into a lookup.
+     *
+     * <p>REGISTRATION IS EXPLICIT, AND IT IS THE ONE THING A CONSUMER MUST NOT FORGET. {@link Asking}
+     * could register itself, and then nobody could get this wrong; it does not, because it is built
+     * with a LABEL and a consumer registers under a NAME, and the two are not the same string.
+     * Auto-registering would silently rewrite the agent column of every exchange row a corpus
+     * already holds. Call this once per agent, or every exchange is attributed to nobody: 737 of
+     * them in one sweep were.
      */
     private static final Map<String, String> BY_PROMPT = new ConcurrentHashMap<>();
 
@@ -77,182 +74,132 @@ public final class Listening implements ChatModelListener {
 
     private final Trace trace;
 
+    /** Agents whose system prompt this run has already written down once. */
+    private final Set<String> promptRecorded = ConcurrentHashMap.newKeySet();
+
     Listening(Trace trace) {
         this.trace = trace;
     }
 
-    private static final String STARTED = "ratchet.started";
-
     /**
      * WRITTEN WHEN IT IS SENT, not when the answer comes back.
      *
-     * <p>Both halves used to be recorded from onResponse, which stamps them at completion. A call
-     * that takes seventeen seconds then filed its own prompt seventeen seconds late, AFTER the
-     * streamed reasoning it had caused, so the record read backwards: the model thinking, and then
-     * what it had been asked. The listener is handed the request before the call goes out; that is
-     * where the request belongs.
+     * <p>Both halves used to be recorded at completion. A call that takes seventeen seconds then
+     * filed its own prompt seventeen seconds late, AFTER the streamed reasoning it had caused, so
+     * the record read backwards: the model thinking, and then what it had been asked.
      */
-    @Override
-    public void onRequest(ChatModelRequestContext ctx) {
-        ctx.attributes().put(STARTED, System.currentTimeMillis());
+    void sending(List<Said> messages) {
         try {
-            List<ChatMessage> sent = ctx.chatRequest().messages();
-            String agent = agentOf(system(sent));
-            trace.exchanged(new Trace.Exchange("to", agent, sent.size(),
-                    outbound(agent, sent), "", "", "", 0, 0, 0, ""));
+            String agent = agentOf(system(messages));
+            trace.exchanged(new Trace.Exchange("to", agent, messages.size(),
+                    outbound(agent, messages), "", "", "", 0, 0, 0, ""));
         } catch (RuntimeException recordingMustNotBreakTheRun) {
-            trace.progress("", "listener: " + recordingMustNotBreakTheRun);
+            note(recordingMustNotBreakTheRun);
         }
     }
 
-    @Override
-    public void onResponse(ChatModelResponseContext ctx) {
+    void back(List<Said> sent, Reply reply, long ms) {
         try {
-            List<ChatMessage> sent = ctx.chatRequest().messages();
-            var response = ctx.chatResponse();
-            var meta = response == null ? null : response.metadata();
-            var usage = meta == null ? null : meta.tokenUsage();
-            var ai = response == null ? null : response.aiMessage();
-            String tools = ai == null || !ai.hasToolExecutionRequests() ? ""
-                    : ai.toolExecutionRequests().stream()
-                            .map(t -> t.name()).distinct().reduce((a, b) -> a + "," + b).orElse("");
-            trace.exchanged(new Trace.Exchange(
-                    "back",
-                    agentOf(system(sent)),
-                    sent.size(),
-                    "",
-                    tail(ai == null || ai.text() == null ? "" : ai.text()),
-                    tools,
-                    meta == null || meta.finishReason() == null ? "" : meta.finishReason().name(),
-                    usage == null || usage.inputTokenCount() == null ? 0 : usage.inputTokenCount(),
-                    usage == null || usage.outputTokenCount() == null ? 0 : usage.outputTokenCount(),
-                    since(ctx.attributes()),
-                    ""));
+            String tools = reply.calls().stream().map(Called::name).distinct()
+                    .reduce((a, b) -> a + "," + b).orElse("");
+            trace.exchanged(new Trace.Exchange("back", agentOf(system(sent)), sent.size(), "",
+                    tail(reply.said()), tools, reply.ending().name(),
+                    reply.spend().prompt(), reply.spend().completion(), ms, ""));
         } catch (RuntimeException recordingMustNotBreakTheRun) {
             // A LISTENER THAT THROWS TAKES THE CALL WITH IT. Nothing here is worth failing a run
             // for, so an unexpected shape is dropped rather than propagated.
-            trace.progress("", "listener: " + recordingMustNotBreakTheRun);
+            note(recordingMustNotBreakTheRun);
         }
     }
 
-    @Override
-    public void onError(ChatModelErrorContext ctx) {
+    void failed(List<Said> sent, Throwable cause, long ms) {
         try {
-            List<ChatMessage> sent = ctx.chatRequest() == null ? List.of()
-                    : ctx.chatRequest().messages();
-            Throwable cause = ctx.error();
-            trace.exchanged(new Trace.Exchange(
-                    "back", agentOf(system(sent)), sent.size(), "", "", "", "ERROR", 0, 0,
-                    since(ctx.attributes()),
-                    cause == null ? "unknown" : cause.getClass().getSimpleName()
-                            + ": " + String.valueOf(cause.getMessage())));
+            trace.exchanged(new Trace.Exchange("back", agentOf(system(sent)), sent.size(), "", "",
+                    "", "ERROR", 0, 0, ms, cause == null ? "unknown"
+                            : cause.getClass().getSimpleName() + ": " + cause.getMessage()));
         } catch (RuntimeException ignored) {
             // As above: the error path is the last place to add a second failure.
         }
     }
 
-    private static long since(Map<Object, Object> attributes) {
-        Object started = attributes.get(STARTED);
-        return started instanceof Long ms ? System.currentTimeMillis() - ms : 0;
+    private void note(RuntimeException failed) {
+        try {
+            trace.progress("", "listener: " + failed);
+        } catch (RuntimeException nothingLeftToTry) {
+            // Deliberately empty.
+        }
     }
 
-    private static String system(List<ChatMessage> messages) {
-        for (ChatMessage m : messages) {
-            if (m instanceof SystemMessage s) {
-                return s.text();
+    private static String system(List<Said> messages) {
+        for (Said m : messages) {
+            if (m.role() == Said.Role.SYSTEM) {
+                return m.text();
             }
         }
         return "";
     }
 
-    /** Agents whose system prompt this run has already written down once. */
-    private final java.util.Set<String> promptRecorded = java.util.concurrent.ConcurrentHashMap
-            .newKeySet();
-
     /**
      * WHAT ACTUALLY WENT, WHICH INCLUDES THE PROMPT.
      *
      * <p>This used to be the LAST message only. On a first call that is {@code [system, user]}, so
-     * the record showed the task and dropped the instruction governing the agent -- the half that
+     * the record showed the task and dropped the instruction governing the agent — the half that
      * decides what it does. "2 message(s)" was true and told a reader nothing about the one it
      * could not see.
      *
-     * <p>THE SYSTEM PROMPT ONCE PER AGENT, then named rather than repeated. It is identical on
-     * every call of that agent and runs to thousands of characters, so writing it each time would
-     * put the same paragraphs on disk a hundred times per run. Once is what a reader needs, and it
-     * is the prompt IN FORCE, so an edited one shows as edited rather than as whatever the code
-     * ships.
+     * <p>THE SYSTEM PROMPT ONCE PER AGENT, then named rather than repeated. It is identical on every
+     * call of that agent and runs to thousands of characters, so writing it each time would put the
+     * same paragraphs on disk a hundred times per run. Once is what a reader needs, and it is the
+     * prompt IN FORCE, so an edited one shows as edited rather than as whatever the code ships.
      */
-    private String outbound(String agent, List<ChatMessage> messages) {
+    private String outbound(String agent, List<Said> messages) {
         StringBuilder out = new StringBuilder();
-        for (ChatMessage m : messages) {
-            if (m instanceof SystemMessage s) {
-                String key = agent + "|" + s.text().length();
+        for (Said m : messages) {
+            if (m.role() == Said.Role.SYSTEM) {
+                String key = agent + "|" + m.text().length();
                 if (promptRecorded.add(key)) {
                     out.append("[system: ").append(agent.isBlank() ? "unrecognised" : agent)
-                            .append(", ").append(s.text().length()).append(" chars]\n")
-                            .append(clip(s.text(), 4000)).append("\n\n");
+                            .append(", ").append(m.text().length()).append(" chars]\n")
+                            .append(clip(m.text(), 4000)).append("\n\n");
                 } else {
                     out.append("[system: ").append(agent).append("'s prompt, unchanged, ")
-                            .append(s.text().length()).append(" chars]\n\n");
+                            .append(m.text().length()).append(" chars]\n\n");
                 }
                 continue;
             }
-            out.append('[').append(role(m)).append("]\n").append(clip(text(m), 900))
-                    .append("\n\n");
+            out.append('[').append(role(m)).append("]\n").append(clip(said(m), 900)).append("\n\n");
         }
         return out.toString().strip();
     }
 
-    private static String role(ChatMessage m) {
-        if (m instanceof dev.langchain4j.data.message.UserMessage) {
-            return "user";
+    private static String role(Said m) {
+        return switch (m.role()) {
+            case USER -> "user";
+            case ASSISTANT -> "assistant";
+            case TOOL -> "tool result";
+            case SYSTEM -> "system";
+        };
+    }
+
+    /**
+     * THE TEXT, not a toString.
+     *
+     * <p>The record showed {@code UserMessage { name = null, contents = [TextContent { text = ...}}
+     * on the one view whose job is showing what was said. That wrapper was Java's, not the model's;
+     * the model saw the text. Here there is no wrapper to leak, and an assistant turn that is
+     * nothing but tool calls says so rather than showing an empty line.
+     */
+    private static String said(Said m) {
+        if (m.role() == Said.Role.ASSISTANT && m.text().isEmpty() && !m.calls().isEmpty()) {
+            return m.calls().stream().map(c -> c.name() + c.arguments())
+                    .reduce((a, b) -> a + "\n" + b).orElse("");
         }
-        if (m instanceof dev.langchain4j.data.message.AiMessage) {
-            return "assistant";
-        }
-        if (m instanceof dev.langchain4j.data.message.ToolExecutionResultMessage) {
-            return "tool result";
-        }
-        return m.getClass().getSimpleName();
+        return m.text();
     }
 
     private static String clip(String text, int limit) {
         String s = text == null ? "" : text.strip();
         return s.length() <= limit ? s : s.substring(0, limit) + "\n... (truncated)";
-    }
-
-    private static String text(ChatMessage m) {
-        return last(List.of(m));
-    }
-
-    /**
-     * THE TEXT OF THE LAST MESSAGE, not its toString.
-     *
-     * <p>The record showed "UserMessage { name = null, contents = [TextContent { text = ..." on the
-     * one view whose job is showing what was said. The wrapper is Java's, not the model's; the
-     * model saw the text.
-     */
-    private static String last(List<ChatMessage> messages) {
-        if (messages.isEmpty()) {
-            return "";
-        }
-        ChatMessage m = messages.get(messages.size() - 1);
-        if (m instanceof dev.langchain4j.data.message.UserMessage u) {
-            return u.singleText();
-        }
-        if (m instanceof dev.langchain4j.data.message.AiMessage a) {
-            return a.text() == null ? String.valueOf(m) : a.text();
-        }
-        if (m instanceof dev.langchain4j.data.message.ToolExecutionResultMessage r) {
-            // The tool that produced it matters as much as the text: a result with no name reads
-            // as an answer from nowhere.
-            return r.toolName() + " -> " + r.text();
-        }
-        if (m instanceof SystemMessage s) {
-            return s.text();
-        }
-        return String.valueOf(m);
     }
 
     /**

@@ -7,14 +7,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.exception.RateLimitException;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
-
 import org.junit.jupiter.api.Test;
 
 import tech.mikhailov.ratchet.record.Trace;
@@ -34,6 +26,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * proxy, and a consumer testing its own pipeline had to live through the waits or not test them.
  *
  * <p>These are the one-liners that fix that, asserted as a consumer would reach them.
+ *
+ * <p>THE FLAKY ENDPOINT IS NOW ONE LAMBDA'S WORTH OF FAKE, because {@link Chat} is one method. It
+ * used to be a five-method streaming client from somebody else's library, handed its failures
+ * through a callback; the same eighty-eight-second schedule is asserted below with nothing but a
+ * counter and a throw, and none of it is waited through.
  */
 class AConsumerCanChooseItsOwnRetryTest {
 
@@ -42,7 +39,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(3);
 
         assertThrows(RuntimeException.class,
-                () -> wrapped(endpoint, new Notes(), Retry.none()).chat(ask()));
+                () -> wrapped(endpoint, new Notes(), Retry.none()).answer(ask()));
 
         assertEquals(1, endpoint.calls.get(), "asked once, exactly as before Retrying existed");
         // BOTH HALVES, because either alone would hold if the other were broken: none() refuses
@@ -58,7 +55,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(2);
         Waits waits = new Waits();
 
-        wrapped(endpoint, new Notes(), Retry.local().with(waits)).chat(ask());
+        wrapped(endpoint, new Notes(), Retry.local().with(waits)).answer(ask());
 
         assertEquals(3, endpoint.calls.get());
         assertEquals(List.of(1L, 1L), waits.asked,
@@ -71,7 +68,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Waits waits = new Waits();
 
         assertThrows(RuntimeException.class, () -> wrapped(endpoint, new Notes(),
-                Retry.times(3).with(waits)).chat(ask()));
+                Retry.times(3).with(waits)).answer(ask()));
 
         assertEquals(3, endpoint.calls.get(), "three attempts, not the default ten");
         assertEquals(2, waits.asked.size());
@@ -81,7 +78,10 @@ class AConsumerCanChooseItsOwnRetryTest {
 
     @Test
     void aConsumerCanSupplyItsOwnScheduleWhichIsWhereRetryAfterWouldGo() {
-        Flaky endpoint = new Flaky(2, RateLimitException::new, "slow down");
+        // A rate limit is now a status this library read off the response rather than a type from
+        // somebody else's client: Refused(429) IS the "slow down", and transportFailures() judges
+        // it by that number alone.
+        Flaky endpoint = new Flaky(2, because -> new Refused(429, because), "slow down");
         Waits waits = new Waits();
 
         // COMPOSES WITH THE SHIPPED SCHEDULE RATHER THAN REPLACING IT, which is the whole shape of
@@ -98,7 +98,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         };
 
         wrapped(endpoint, new Notes(),
-                Retry.fromEnv().with(honoursTheServer).with(waits)).chat(ask());
+                Retry.fromEnv().with(honoursTheServer).with(waits)).answer(ask());
 
         assertEquals(2, waits.asked.size());
         for (long wait : waits.asked) {
@@ -119,7 +119,7 @@ class AConsumerCanChooseItsOwnRetryTest {
                     ? ours : theirs.plusSeconds(DRAW.getAsInt());
         };
 
-        List<Throwable> oneRateLimit = List.of(new RateLimitException("slow down"));
+        List<Throwable> oneRateLimit = List.of(new Refused(429, "slow down"));
         Set<Long> drawn = new HashSet<>();
         for (int lane = 0; lane < 200; lane++) {
             drawn.add(composed.before(oneRateLimit).toSeconds());
@@ -131,9 +131,16 @@ class AConsumerCanChooseItsOwnRetryTest {
                 "and none of them may go before the server said: " + drawn);
     }
 
-    /** What a real one would read off a {@code Retry-After} header; null when the server said nothing. */
+    /**
+     * What a real one would read off a {@code Retry-After} header; null when the server said nothing.
+     *
+     * <p>The rate limit is recognised by its STATUS here, because that is what the failure now
+     * carries: {@link Refused#status()} is the code this library's own client read off the response,
+     * rather than a type a third party mapped it onto in an {@code internal} package.
+     */
     private static Duration retryAfter(Throwable failure) {
-        return failure instanceof RateLimitException ? Duration.ofSeconds(90) : null;
+        return failure instanceof Refused refused && refused.status() == 429
+                ? Duration.ofSeconds(90) : null;
     }
 
     /** Stands in for the consumer's own draw. */
@@ -145,7 +152,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(4);
         long before = System.nanoTime();
 
-        wrapped(endpoint, new Notes(), Retry.fromEnv().with(Pause.NONE)).chat(ask());
+        wrapped(endpoint, new Notes(), Retry.fromEnv().with(Pause.NONE)).answer(ask());
 
         long tookMillis = (System.nanoTime() - before) / 1_000_000;
         assertEquals(5, endpoint.calls.get());
@@ -172,7 +179,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(Integer.MAX_VALUE);
 
         assertThrows(RuntimeException.class,
-                () -> wrapped(endpoint, new Notes(), pinned.with(waits)).chat(ask()));
+                () -> wrapped(endpoint, new Notes(), pinned.with(waits)).answer(ask()));
 
         assertEquals(3, endpoint.calls.get());
         assertEquals(List.of(1L, 1L), waits.asked,
@@ -186,7 +193,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(Integer.MAX_VALUE);
 
         assertThrows(RuntimeException.class,
-                () -> wrapped(endpoint, new Notes(), oneLane.with(waits)).chat(ask()));
+                () -> wrapped(endpoint, new Notes(), oneLane.with(waits)).answer(ask()));
 
         assertEquals(List.of(1L, 1L, 2L, 3L, 5L), waits.asked,
                 "exactly Fibonacci — right for one lane, and the pile-up for eight");
@@ -204,7 +211,7 @@ class AConsumerCanChooseItsOwnRetryTest {
                 .with(Now.steppingBy(Duration.ofMinutes(2)));
 
         assertThrows(RuntimeException.class,
-                () -> Model.wrap(frozen, new Notes(), fiveMinutes).chat(ask()));
+                () -> Model.wrap(frozen, new Notes(), fiveMinutes).answer(ask()));
 
         assertTrue(frozen.calls.get() < 10,
                 "the five-minute budget stopped it, not the ten attempts: " + frozen.calls.get());
@@ -218,7 +225,7 @@ class AConsumerCanChooseItsOwnRetryTest {
                 .with(Pause.NONE)
                 .with(Now.frozenAt(0));
 
-        Model.wrap(flaky, new Notes(), noTimePasses).chat(ask());
+        Model.wrap(flaky, new Notes(), noTimePasses).answer(ask());
 
         assertEquals(4, flaky.calls.get(),
                 "a millisecond budget is never spent when the clock does not move");
@@ -247,14 +254,19 @@ class AConsumerCanChooseItsOwnRetryTest {
 
     private static final Now FROZEN = Now.frozenAt(0);
 
-    /** Every wrap in this file freezes the clock; the budget has its own test. */
-    private static dev.langchain4j.model.chat.ChatModel wrapped(
-            dev.langchain4j.model.chat.StreamingChatModel s, Trace t, Retry r) {
-        return Model.wrap(s, t, r.with(FROZEN));
+    /**
+     * Every wrap in this file freezes the clock; the budget has its own test.
+     *
+     * <p>{@link Retrying#on(Chat, Retry, Trace)} is the same construction under the name a consumer
+     * outside this package reaches for; this stays on {@link Model#wrap} because that is the line
+     * the shipped chain actually installs.
+     */
+    private static Chat wrapped(Chat client, Trace trace, Retry retry) {
+        return Model.wrap(client, trace, retry.with(FROZEN));
     }
 
-    private static ChatRequest ask() {
-        return ChatRequest.builder().messages(UserMessage.from("what is the ratchet")).build();
+    private static Ask ask() {
+        return Ask.of(List.of(Said.user("what is the ratchet")));
     }
 
     private static final class Waits implements Pause {
@@ -266,7 +278,14 @@ class AConsumerCanChooseItsOwnRetryTest {
         }
     }
 
-    private static final class Flaky implements StreamingChatModel {
+    /**
+     * An endpoint that drops the first {@code drops} calls and then answers.
+     *
+     * <p>It throws where it used to hand a failure to {@code onError}, because a {@link Chat} is a
+     * function that either answers or throws — which is also why the whole schedule below runs in
+     * milliseconds with no callback, no executor and no socket.
+     */
+    private static final class Flaky implements Chat {
         final AtomicInteger calls = new AtomicInteger();
         private final int drops;
         private final java.util.function.Function<String, RuntimeException> failure;
@@ -283,15 +302,12 @@ class AConsumerCanChooseItsOwnRetryTest {
         }
 
         @Override
-        public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
+        public Reply answer(Ask ask) {
             int call = calls.incrementAndGet();
             if (call <= drops) {
-                handler.onError(failure.apply(because));
-                return;
+                throw failure.apply(because);
             }
-            handler.onPartialResponse("ans");
-            handler.onCompleteResponse(
-                    ChatResponse.builder().aiMessage(AiMessage.from("answer " + call)).build());
+            return new Reply("answer " + call, "", List.of(), Ending.STOPPED, Spend.NONE);
         }
     }
 

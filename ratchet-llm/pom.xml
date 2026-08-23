@@ -3,33 +3,28 @@
   <parent>
     <groupId>tech.mikhailov.ratchet</groupId>
     <artifactId>ratchet-parent</artifactId>
-    <version>0.12.0</version>
+    <version>0.13.0</version>
   </parent>
   <artifactId>ratchet-llm</artifactId>
   <packaging>jar</packaging>
   <name>ratchet-llm</name>
   <description>The model wiring: the streaming reply, the thinking budget, the tool loop and the
-    listener that records the wire. langchain4j only.</description>
-  <!-- THREE ARTIFACTS AND NO MORE. langchain4j carries AiServices and the tool loop, -open-ai
-       carries the streaming model, and the JDK http client is what both are pointed at. Each is
-       named here rather than arriving through somebody else s transitive, because a compile that
-       leans on a transitive is a compile that breaks when that somebody stops needing it. -->
+    listener that records the wire. The JDK only.</description>
+  <!-- ONE DEPENDENCY, AND IT IS THE OTHER HALF OF THIS PROJECT. Everything this module needs to
+       speak to an OpenAI-compatible endpoint is in java.net.http and java.util: the request is
+       written with ratchet's own Json, the response is read off the SSE frames, and the tool loop
+       is fifteen lines.
+
+       IT USED TO TAKE THREE ARTIFACTS AND THIRTEEN JARS. What that bought was one POST and one SSE
+       reader; what it cost was eight megabytes reaching every consumer who wanted the retry
+       schedule, an NLP toolkit and a BPE tokenizer among them, neither of which anything here has
+       ever called. It also cost behaviour: three classes in this package existed to work around the
+       client, and the reasoning this endpoint produces was dropped on the floor for eighty-four
+       calls because it names the field `reasoning` and the client read `reasoning_content`. -->
   <dependencies>
     <dependency>
       <groupId>tech.mikhailov.ratchet</groupId>
       <artifactId>ratchet-core</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>dev.langchain4j</groupId>
-      <artifactId>langchain4j</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>dev.langchain4j</groupId>
-      <artifactId>langchain4j-open-ai</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>dev.langchain4j</groupId>
-      <artifactId>langchain4j-http-client-jdk</artifactId>
     </dependency>
   </dependencies>
 </project>

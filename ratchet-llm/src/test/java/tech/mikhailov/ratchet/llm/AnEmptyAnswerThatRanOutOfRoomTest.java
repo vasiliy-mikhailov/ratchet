@@ -1,15 +1,6 @@
 package tech.mikhailov.ratchet.llm;
 
-import java.util.List;
-
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.chat.response.ChatResponseMetadata;
-import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
-import dev.langchain4j.model.output.FinishReason;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
@@ -30,10 +21,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * thinking 9,488 chars   content 0 chars   finish_reason: length
  * </pre>
  *
- * <p>The model spent the entire budget reasoning and wrote nothing. {@code finishReason()} has been
- * on the response the whole time and nothing read it, so that empty string was returned as the
- * agent's answer — and a consumer that writes what the agent returned wrote nothing over a file that
- * had something in it.
+ * <p>The model spent the entire budget reasoning and wrote nothing. The finish reason has been on
+ * the response the whole time and nothing read it, so that empty string was returned as the agent's
+ * answer — and a consumer that writes what the agent returned wrote nothing over a file that had
+ * something in it. It is {@link Wire#read} that reads it now: the reason arrives as
+ * {@code "finish_reason":"length"} on a frame this test can simply hand it, where before it took a
+ * client library's response object to say the same thing.
  *
  * <p>It matters that this is neither of the two things it resembles. Handed to {@link Insisting} it
  * is read as SILENCE and the model is re-asked, which spends a second full budget arriving at the
@@ -44,10 +37,8 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
 
     @Test
     void anEmptyAnswerThatRanOutOfRoomIsRefusedRatherThanReturned() {
-        Streamed streamed = new Streamed(ended(FinishReason.LENGTH, ""), QUIET);
-
-        Streamed.Truncated cut = assertThrows(Streamed.Truncated.class,
-                () -> streamed.chat(ask()));
+        Truncated cut = assertThrows(Truncated.class, () -> client().read(
+                ended("length", "The question is who speaks first in the novel, so I should ", "")));
 
         assertTrue(cut.getMessage().contains("token limit"), cut.getMessage());
         assertTrue(cut.getMessage().contains("RATCHET_THINKING_TOKENS"),
@@ -58,32 +49,56 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
     void anAnswerThatRanOutOfRoomIsStillAnAnswer() {
         // Truncated PROSE is a real reply that got cut off. The caller may still want it, and
         // refusing it would throw away work the model actually did.
-        Streamed streamed = new Streamed(ended(FinishReason.LENGTH, "Pierre Bezúkhov is the"), QUIET);
+        Reply reply = client().read(ended("length", "", "Pierre Bezúkhov is the"));
 
-        assertEquals("Pierre Bezúkhov is the", streamed.chat(ask()).aiMessage().text());
+        assertEquals("Pierre Bezúkhov is the", reply.said());
+        assertEquals(Ending.LENGTH, reply.ending(),
+                "and the reply says it was cut off, which is the caller's to judge");
     }
 
     @Test
     void anEmptyAnswerThatSIMPLYSTOPPEDIsSilenceAndNotATruncation() {
         // The distinction the type exists for. A model that declined to answer finishes with STOP,
         // and that is Insisting's business — re-asking it is exactly right.
-        Streamed streamed = new Streamed(ended(FinishReason.STOP, ""), QUIET);
+        Reply reply = client().read(ended("stop", "", ""));
 
-        assertEquals("", streamed.chat(ask()).aiMessage().text(),
-                "silence passes through to the layer that judges silence");
+        assertEquals("", reply.said(), "silence passes through to the layer that judges silence");
+        assertEquals(Ending.STOPPED, reply.ending());
+    }
+
+    @Test
+    void anEmptyAnswerThatRanOutOfRoomASKINGFORATOOLIsNotEmptyEITHER() {
+        // The third shape, visible only now that this library parses the frames itself: blank
+        // content, finish_reason length, and a tool call in the turn. There IS something to act on,
+        // so the guard requires the call list to be empty as well before it refuses the reply.
+        Reply reply = client().read(Stream.of(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"t1\","
+                        + "\"type\":\"function\",\"index\":0,\"function\":{\"name\":\"read_file\"}}]},"
+                        + "\"finish_reason\":null}]}",
+                "",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                        + "\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}",
+                "",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}",
+                "",
+                "data: [DONE]"));
+
+        assertTrue(reply.wantsTools(), "the turn asked for something; that is not silence");
+        assertEquals("read_file", reply.calls().get(0).name());
+        assertEquals(Ending.LENGTH, reply.ending(), "and it still says the budget ran out");
     }
 
     @Test
     void aTruncationIsNotRetried() {
         // The identical request meets the identical budget. Ten attempts buy ten more full
         // generations and the same empty answer.
-        assertFalse(Retrying.transportFailures().test(new Streamed.Truncated("no room left")),
+        assertFalse(Retrying.transportFailures().test(new Truncated("no room left")),
                 "retrying this is paying ten times to hit one wall");
     }
 
     @Test
     void aTruncationIsNotConfusedWithTheCeilingOrWithSilence() {
-        assertFalse(Retrying.transportFailures().test(new Streamed.GaveUp("3h")),
+        assertFalse(Retrying.transportFailures().test(new GaveUp("3h")),
                 "the ceiling is also not retried, for a different reason");
         assertTrue(Retrying.transportFailures().test(new IllegalStateException("connection reset")),
                 "and an ordinary drop still is");
@@ -91,21 +106,35 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
 
     // ---------------------------------------------------------------- the fakes
 
-    private static ChatRequest ask() {
-        return ChatRequest.builder().messages(UserMessage.from("who speaks first?")).build();
+    /**
+     * A client with no socket under it. Everything the guard reads is a value now — the patience,
+     * the sampling, the endpoint — so the frames can be handed straight to {@link Wire#read}.
+     */
+    private static Wire client() {
+        return new Wire(Endpoint.of("http://localhost:1", "a-model"), Sampling.deterministic(),
+                Watch.shipped(), true, QUIET);
     }
 
-    /** A stream that completes once, with the finish reason and content given. */
-    private static StreamingChatModel ended(FinishReason why, String content) {
-        return new StreamingChatModel() {
-            @Override
-            public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
-                handler.onCompleteResponse(ChatResponse.builder()
-                        .aiMessage(AiMessage.from(content))
-                        .metadata(ChatResponseMetadata.builder().finishReason(why).build())
-                        .build());
-            }
-        };
+    /**
+     * One generation, in the frame shapes captured from the production endpoint: the opening role
+     * delta, whatever it thought and said, the finish reason, then the usage chunk whose
+     * {@code choices} array is empty, then {@code [DONE]}.
+     */
+    private static Stream<String> ended(String why, String reasoning, String content) {
+        return Stream.of(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\","
+                        + "\"content\":\"\"},\"finish_reason\":null}]}",
+                "",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"" + reasoning + "\"},"
+                        + "\"finish_reason\":null}]}",
+                "",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + content + "\"},"
+                        + "\"finish_reason\":\"" + why + "\"}]}",
+                "",
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":57,\"total_tokens\":69,"
+                        + "\"completion_tokens\":12}}",
+                "",
+                "data: [DONE]");
     }
 
     private static final Trace QUIET = new Trace() {

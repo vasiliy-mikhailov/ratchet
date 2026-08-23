@@ -20,6 +20,13 @@ import java.util.stream.Collectors;
  * rather than an omission. {@link #number} is the exception carved out of it, and it exists because
  * that rule silently swallowed every integer argument any agent ever sent.
  *
+ * <p>IT DESCENDS EXACTLY ONE STEP AT A TIME, and {@link #part} is the whole of that. The
+ * responses from a streaming endpoint are not flat — a tool call arrives as
+ * {@code choices[].delta.tool_calls[].function.arguments} — and reading them with a flat scan
+ * files the second call's arguments against the first. There is still no tree model and
+ * nothing here builds one; {@code part} hands back a substring and the caller says which
+ * level it meant.
+ *
  * <p>Escaping is {@link Settlement#escape}, which is the same function the record itself is written
  * with. Two escapers would eventually disagree about a control character, and the one place that
  * shows up is a trace body, which is exactly the field most likely to contain one.
@@ -133,6 +140,82 @@ public final class Json {
         } catch (NumberFormatException notANumber) {
             return fallback;
         }
+    }
+
+
+    /**
+     * THE RAW JSON UNDER A NAME, WHATEVER SHAPE IT IS — the one step of descent this file needed.
+     *
+     * <p>{@link #read} scans flat and takes the first match, which is exactly right for a tool
+     * argument and exactly wrong for a streamed chunk. A chunk carrying a tool call has an
+     * {@code index} at the choice level and a second {@code index} inside {@code tool_calls}, and
+     * the flat scan finds the choice's. With one call in flight both are zero and nothing shows;
+     * with two calls in one turn the second one's arguments are filed against the first.
+     *
+     * <p>So this returns the fragment and the caller reads INSIDE it — {@code part(chunk, "delta")}
+     * then {@code read(delta, "content")} — which makes the nesting explicit at the call site
+     * rather than hoping the document is shallow.
+     *
+     * <p>It does not unescape and it does not parse. It counts brackets, respecting strings and
+     * their escapes, and hands back the substring. There is still no tree model here; there is one
+     * scanner, and everything that turns bytes into text is still {@link #read}.
+     *
+     * @return the value's raw JSON — object, array, quoted string or bare scalar — or "" if absent
+     */
+    public static String part(String json, String name) {
+        if (json == null) {
+            return "";
+        }
+        int at = json.indexOf("\"" + name + "\":");
+        if (at < 0) {
+            return "";
+        }
+        int i = at + name.length() + 3;
+        while (i < json.length() && Character.isWhitespace(json.charAt(i))) {
+            i++;
+        }
+        if (i >= json.length()) {
+            return "";
+        }
+        char opens = json.charAt(i);
+        if (opens == '"') {
+            for (int p = i + 1; p < json.length(); p++) {
+                char c = json.charAt(p);
+                if (c == '\\') {
+                    p++;
+                } else if (c == '"') {
+                    return json.substring(i, p + 1);
+                }
+            }
+            return "";
+        }
+        if (opens == '{' || opens == '[') {
+            char closes = opens == '{' ? '}' : ']';
+            int depth = 0;
+            boolean inString = false;
+            for (int p = i; p < json.length(); p++) {
+                char c = json.charAt(p);
+                if (inString) {
+                    if (c == '\\') {
+                        p++;
+                    } else if (c == '"') {
+                        inString = false;
+                    }
+                } else if (c == '"') {
+                    inString = true;
+                } else if (c == opens) {
+                    depth++;
+                } else if (c == closes && --depth == 0) {
+                    return json.substring(i, p + 1);
+                }
+            }
+            return "";
+        }
+        int stop = i;
+        while (stop < json.length() && ",}]".indexOf(json.charAt(stop)) < 0) {
+            stop++;
+        }
+        return json.substring(i, stop).trim();
     }
 
     /** A whole flat row as a map. Tolerant of both quoted strings and bare numbers and booleans;

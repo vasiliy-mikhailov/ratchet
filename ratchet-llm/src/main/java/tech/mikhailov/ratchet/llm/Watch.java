@@ -5,7 +5,7 @@ import java.time.Duration;
 /**
  * HOW LONG A STREAM MAY BE SILENT, AND HOW LONG IT MAY RUN, AS A VALUE.
  *
- * <p>These were {@code private static final Duration} on {@link Streamed}, parsed from the
+ * <p>These were {@code private static final Duration} on {@link Wire}, parsed from the
  * environment at class load — the fourth time in this library that a seam stopped one step short of
  * the package boundary, after {@link Backoff}/{@link Pause}, {@link Now} and {@link Endpoint}. Each
  * of those was reported by a consumer rather than found here.
@@ -22,7 +22,7 @@ import java.time.Duration;
  *                It bounds a DEAD socket, not a slow one.
  * @param ceiling a hard cap that exists only so a wedged lane cannot hold a slot forever. It is the
  *                one guard here that can end work which IS progressing, which is why
- *                {@link Streamed.GaveUp} is refused by the retry.
+ *                {@link GaveUp} is refused by the retry.
  */
 public record Watch(Duration stall, Duration ceiling) {
 

@@ -1,17 +1,19 @@
 package tech.mikhailov.ratchet.llm;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
-import java.util.Map;
+import tech.mikhailov.ratchet.record.Json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * THE REQUEST SAYS HOW MUCH THINKING IS EXPECTED, WHICH IT NEVER DID.
  *
- * <p>This client set {@code max_tokens} and nothing else. That bounds the OUTPUT; nothing bounded
+ * <p>The client set {@code max_tokens} and nothing else. That bounds the OUTPUT; nothing bounded
  * the REASONING, and a reasoning model given a question it cannot answer reasons until something
  * else stops it. What stopped it here was a repetition detector of our own, which aborts the stream
  * and yields NOTHING: 37 times in one sweep, 17% of every agent call, each one costing a retry that
@@ -28,50 +30,66 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </pre>
  *
  * <p>The detector stays. A budget bounds how long a cycle runs; it does not stop one starting.
+ *
+ * <p>THIS TEST EARNED ITS KEEP DURING THE LANGCHAIN4J REMOVAL. The body it reads used to be a map
+ * of "custom parameters" handed to somebody else's builder; it is now the whole request, written
+ * here. In the first draft of that move the budget was gated on the thinking flag — which reads
+ * plausibly and is wrong for the reason {@link #theTemplateSwitchDoesNotDropTheBudget} gives — and
+ * this file is what said so.
  */
 class HowMuchThinkingIsExpectedTest {
 
     /**
-     * What travels in the request body beside the standard fields.
+     * The whole request, as it goes on the wire.
      *
-     * <p>Read from the one method that builds it rather than reflected out of the client: the first
-     * version of this test dug for a field called {@code model} inside the streaming wrapper, which
-     * is not what it is called and would not have survived a library upgrade if it were.
+     * <p>Read from the one function that builds it rather than reflected out of a client: the first
+     * version of this test dug for a field called {@code model} inside a streaming wrapper, which is
+     * not what it is called and would not have survived a library upgrade if it were. Now there is
+     * no library and no upgrade — {@link Wire#body} is a pure function of its four arguments.
      */
-    private static Map<String, Object> customParameters(boolean thinking) {
-        return Model.extras(thinking, Sampling.fromEnv());
+    private static String body(boolean thinking) {
+        return Wire.body(Ask.of(List.of(Said.user("anything"))),
+                Endpoint.of("http://test/v1", "a-model"), Sampling.fromEnv(), thinking);
     }
 
     @Test
     void theBudgetTravelsWithEveryRequest() {
-        Map<String, Object> extra = customParameters(true);
+        String sent = body(true);
 
-        assertTrue(extra.containsKey("thinking_token_budget"),
-                "nothing bounded the reasoning, and that is what ran away: " + extra.keySet());
-        assertEquals(4000, ((Number) extra.get("thinking_token_budget")).intValue(),
+        assertTrue(sent.contains("\"thinking_token_budget\""),
+                "nothing bounded the reasoning, and that is what ran away: " + sent);
+        assertEquals(4000, Json.number(sent, "thinking_token_budget", -1),
                 "four thousand: where this corpus's aborted generations died, but ending in a reply");
     }
 
     @Test
     void theTemplateSwitchDoesNotDropTheBudget() {
-        // ONE MAP, SET ONCE. Each of these was added on a different day for a different reason, and
-        // the builder takes the whole map, so setting the template switch on its own would have
-        // silently removed the budget from every non-thinking agent.
-        Map<String, Object> extra = customParameters(false);
+        // ONE BODY, BUILT ONCE. Each of these was added on a different day for a different reason
+        // and they are not alternatives. The template switch is the server's own, and a proxy that
+        // drops unknown fields drops it in silence; the budget is what still binds when that
+        // happens. Setting the switch INSTEAD of the budget would leave exactly the non-thinking
+        // agents with no bound on their reasoning at all.
+        String sent = body(false);
 
-        assertTrue(extra.containsKey("thinking_token_budget"), extra.keySet().toString());
-        assertTrue(extra.containsKey("chat_template_kwargs"), extra.keySet().toString());
+        assertTrue(sent.contains("\"thinking_token_budget\""), sent);
+        assertTrue(sent.contains("\"chat_template_kwargs\""), sent);
+        assertTrue(sent.contains("\"enable_thinking\":false"),
+                "the switch is the server template's own, not a prompt asking for brevity: " + sent);
     }
 
     @Test
-    void itIsTheThinkingThatIsBoundedNotTheOutput() {
-        // max_tokens truncates the ANSWER wherever it had got to. This one makes the model stop
+    void itIsTheThinkingThatIsBoundedAndTheOutputSeparately() {
+        // max_tokens truncates the ANSWER wherever it had got to. The budget makes the model stop
         // thinking and answer. Confusing them is how the previous cap was removed and nothing
         // replaced it: that cap was on the output, so removing it restored no bound on the thinking
-        // because there had never been one.
-        Map<String, Object> extra = customParameters(true);
+        // because there had never been one. Both travel, and they are different numbers.
+        String sent = body(true);
 
-        assertFalse(extra.containsKey("max_tokens"),
-                "max_tokens is a builder field, not a custom parameter, and bounds a different thing");
+        assertEquals(16_000, Json.number(sent, "max_tokens", -1), sent);
+        assertEquals(4_000, Json.number(sent, "thinking_token_budget", -1), sent);
+        assertNotEquals(Json.number(sent, "max_tokens", -1),
+                Json.number(sent, "thinking_token_budget", -1),
+                "they bound different things and a single number cannot do both: they share a pool, "
+                        + "so the reasoning half must leave room for the answer");
     }
 }

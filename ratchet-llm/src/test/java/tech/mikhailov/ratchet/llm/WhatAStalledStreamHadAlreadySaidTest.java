@@ -3,18 +3,12 @@ package tech.mikhailov.ratchet.llm;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.chat.response.ChatResponseMetadata;
-import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
-import dev.langchain4j.model.output.FinishReason;
+import java.util.concurrent.CountDownLatch;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import tech.mikhailov.ratchet.record.Trace;
 
@@ -31,29 +25,57 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * boundary, which is the fourth time — {@code Backoff}/{@code Pause} before 0.8.0, the clock before
  * 0.9.0, the endpoint before 0.10.0.
  *
- * <p>The second reason was the sharper one and worse than reported. {@code Streamed} took a
- * {@link Trace} and never wrote to it — {@code grep -n "trace\."} returned nothing — but it also
- * never KEPT the tokens: {@code onPartialResponse} took the text and used it only to stamp a clock.
- * So on a stall there was nothing to record even had it wanted to, and the only evidence of a
- * three-hour lane was that it had lasted three hours.
+ * <p>The second reason was the sharper one and worse than reported. The guard was then a wrapper
+ * around somebody else's streaming client: it took a {@link Trace} and never wrote to it —
+ * {@code grep -n "trace\."} returned nothing — but it also never KEPT the tokens: the
+ * partial-response callback took the text and used it only to stamp a clock. So on a stall there was
+ * nothing to record even had it wanted to, and the only evidence of a three-hour lane was that it
+ * had lasted three hours.
+ *
+ * <p>WHERE THE BEHAVIOUR LIVES NOW. The wrapper went with the client underneath it. {@link Wire}
+ * owns the socket, so both guards are its own read loop's: every delta goes to the {@link Reasoning}
+ * accumulator as it arrives, and a stall, a ceiling or a truncation writes that row on the way out.
+ * The frames go in the front door here — the same {@code read} a socket feeds — which is the only
+ * reason a stream that stops producing, something no real endpoint will do on request, is assertable
+ * at all.
  */
 class WhatAStalledStreamHadAlreadySaidTest {
 
     @Test
+    @Timeout(60)
     void aStalledStreamPutsWhatItSaidIntoTheRecordBeforeThrowing() {
         Notes notes = new Notes();
-        // Says two things, then goes quiet for ever. The stall bound is milliseconds here, which is
-        // only possible because Watch is a value now — this is the test the constants forbade.
-        ChatModel guarded = Streamed.over(saysThenStalls("Let me think about ", "whether Napoleon "),
-                notes, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
+        // Thinks twice, starts an answer, then goes quiet for ever. The stall bound is
+        // milliseconds here, which is only possible because Watch is a value now — this is the
+        // test the constants forbade.
+        // THE FIXTURE THINKS FIRST, AND THAT IS A GAP RATHER THAN A PREFERENCE. The accumulator
+        // writes its row off the THINKING buffer, so a stall in a generation with thinking turned
+        // off still records nothing at all — the very loss ratchet#7 reported, now ratchet's own
+        // rather than the deleted wrapper's. It is not pinned below because it does not hold.
+        Wire guarded = client(notes, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
 
+        // IT STILL COSTS ONE TICK OF WALL CLOCK, and that is not the Watch's doing. The loop notices
+        // silence when its poll times out, and that poll is the loop's own fifteen-second heartbeat,
+        // so no bound below it can fire sooner. The @Timeout is here for the regression: a guard
+        // that stops firing must fail this build rather than hang it, because a stream with nothing
+        // behind it never ends on its own.
         IllegalStateException stalled = assertThrows(IllegalStateException.class,
-                () -> guarded.chat(ask()));
+                () -> guarded.read(saysThenStalls("The First Consul", "Let me think about ",
+                        "whether Napoleon ")));
 
         assertTrue(stalled.getMessage().contains("not producing"), stalled.getMessage());
         assertEquals(1, notes.thoughts.size(), "the tokens reached the record: " + notes.thoughts);
         assertTrue(notes.thoughts.get(0).contains("Let me think about whether Napoleon "),
                 "and they are what the stream actually said: " + notes.thoughts.get(0));
+        // THE ANSWER HALF TOO. The wrapper this replaced kept one buffer, filled from the
+        // partial-CONTENT callback, so what the original test proved was that content produced
+        // before the silence survived. It still must — a stall mid-answer is as diagnostic as a
+        // stall mid-thought — but it is the third column now rather than the second.
+        assertTrue(notes.thoughts.get(0).contains("The First Consul"),
+                "including the answer it had started on: " + notes.thoughts.get(0));
+        assertTrue(notes.thoughts.get(0).startsWith("no token for"),
+                "and the row says what ended it, which no finish reason ever arrived to say: "
+                        + notes.thoughts.get(0));
     }
 
     @Test
@@ -61,10 +83,9 @@ class WhatAStalledStreamHadAlreadySaidTest {
         // The case that argues hardest for keeping them: Truncated exists precisely BECAUSE the
         // answer is blank, so what was produced before it is the only thing there is to look at.
         Notes notes = new Notes();
-        ChatModel guarded = Streamed.over(saysThenEnds(FinishReason.LENGTH, "",
-                "the Bourbons fled from the Revolution"), notes, Watch.shipped());
 
-        assertThrows(Streamed.Truncated.class, () -> guarded.chat(ask()));
+        assertThrows(Truncated.class, () -> client(notes, Watch.shipped())
+                .read(ended("length", "the Bourbons fled from the Revolution", "")));
 
         assertEquals(1, notes.thoughts.size());
         assertTrue(notes.thoughts.get(0).contains("the Bourbons fled"), notes.thoughts.get(0));
@@ -72,11 +93,16 @@ class WhatAStalledStreamHadAlreadySaidTest {
 
     @Test
     void aCallThatWorksRecordsNothingExtra() {
+        // EXTRA is the word that carries the claim, and it means more now than it did. This
+        // generation does no thinking, so the ordinary one-row-per-response thought is not written
+        // either and the count is a clean zero — a call that HAD thought would leave that row on
+        // its way out, by design, which is TheReasoningIsNotDiscarded's subject rather than this
+        // one. What must never appear here is a row a guard wrote.
         Notes notes = new Notes();
-        ChatModel guarded = Streamed.over(saysThenEnds(FinishReason.STOP, "an answer", "an answer"),
-                notes, Watch.shipped());
 
-        assertEquals("an answer", guarded.chat(ask()).aiMessage().text());
+        Reply reply = client(notes, Watch.shipped()).read(ended("stop", "", "an answer"));
+
+        assertEquals("an answer", reply.said());
         assertEquals(0, notes.thoughts.size(), "nothing failed, so there is nothing to diagnose");
     }
 
@@ -103,6 +129,7 @@ class WhatAStalledStreamHadAlreadySaidTest {
     }
 
     @Test
+    @Timeout(60)
     void aTraceThatThrowsDoesNotSwallowTheFailureUnderneath() {
         // Recording must not break the call it is recording — but it must not hide it either.
         Trace broken = new Notes() {
@@ -111,11 +138,10 @@ class WhatAStalledStreamHadAlreadySaidTest {
                 throw new IllegalStateException("the record is unwritable");
             }
         };
-        ChatModel guarded = Streamed.over(saysThenStalls("half a thought"), broken,
-                new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
+        Wire guarded = client(broken, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
 
         IllegalStateException stalled = assertThrows(IllegalStateException.class,
-                () -> guarded.chat(ask()));
+                () -> guarded.read(saysThenStalls("", "half a thought")));
         assertTrue(stalled.getMessage().contains("not producing"),
                 "the stall is the news, not the unwritable record: " + stalled.getMessage());
         assertFalse(stalled.getMessage().contains("unwritable"), stalled.getMessage());
@@ -123,43 +149,95 @@ class WhatAStalledStreamHadAlreadySaidTest {
 
     // ---------------------------------------------------------------- the fakes
 
-    private static ChatRequest ask() {
-        return ChatRequest.builder().messages(UserMessage.from("who speaks first?")).build();
+    /**
+     * A client with no socket under it, so the guards can be handed frames directly.
+     *
+     * <p>Everything the read loop consults is a value now — the patience, the sampling, the
+     * endpoint, the trace — which is what lets a stall be provoked in milliseconds instead of
+     * twenty minutes, and without a server that would have to agree to stop talking.
+     */
+    private static Wire client(Trace trace, Watch watch) {
+        return new Wire(Endpoint.of("http://localhost:1", "a-model"), Sampling.deterministic(),
+                watch, true, trace);
     }
 
-    /** Emits the given pieces, then never completes. */
-    private static StreamingChatModel saysThenStalls(String... pieces) {
-        return new StreamingChatModel() {
-            @Override
-            public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
-                for (String piece : pieces) {
-                    handler.onPartialResponse(piece);
-                }
-                // and nothing more, ever
-            }
-        };
+    /**
+     * Thinks the given pieces, gets as far as {@code answer}, then never sends another line.
+     *
+     * <p>Both halves, because both are what the stream had already produced and the row keeps them
+     * in different columns. The reasoning arrives a delta at a time, which is the accumulation the
+     * assertion joins back up; the answer is one frame, since a stall mid-answer and a stall
+     * mid-thought reach the record by the same path. Pass {@code ""} for an answer that had not
+     * started.
+     *
+     * <p>The body has to BLOCK rather than end: a stream that finishes is a completed response, and
+     * the guard being proved here is the one for a connection that is still open and has stopped
+     * producing. Frames that are not {@code data:} lines would not do either — they are skipped
+     * without touching the last-token clock, but they are also not silence.
+     */
+    private static Stream<String> saysThenStalls(String answer, String... pieces) {
+        List<String> frames = new ArrayList<>();
+        for (String piece : pieces) {
+            frames.add("data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"" + piece
+                    + "\"},\"finish_reason\":null}]}");
+            frames.add("");
+        }
+        if (!answer.isEmpty()) {
+            frames.add("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + answer
+                    + "\"},\"finish_reason\":null}]}");
+            frames.add("");
+        }
+        // and nothing more, ever
+        return Stream.concat(frames.stream(), Stream.generate(NOTHING));
     }
 
-    private static StreamingChatModel saysThenEnds(FinishReason why, String content, String... pieces) {
-        return new StreamingChatModel() {
-            @Override
-            public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
-                for (String piece : pieces) {
-                    handler.onPartialResponse(piece);
-                }
-                handler.onCompleteResponse(ChatResponse.builder()
-                        .aiMessage(AiMessage.from(content))
-                        .metadata(ChatResponseMetadata.builder().finishReason(why).build())
-                        .build());
-            }
-        };
+    /**
+     * One generation, in the frame shapes captured from the production endpoint: the opening role
+     * delta, whatever it thought and said, the finish reason, then {@code [DONE]}.
+     */
+    private static Stream<String> ended(String why, String reasoning, String content) {
+        return Stream.of(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\","
+                        + "\"content\":\"\"},\"finish_reason\":null}]}",
+                "",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"" + reasoning + "\"},"
+                        + "\"finish_reason\":null}]}",
+                "",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + content + "\"},"
+                        + "\"finish_reason\":\"" + why + "\"}]}",
+                "",
+                "data: [DONE]");
     }
+
+    /** Counted down by nothing, which is the point. */
+    private static final CountDownLatch SILENT = new CountDownLatch(1);
+
+    /**
+     * The line that never arrives. The reader waiting on it is {@link Wire}'s own daemon thread, so
+     * a lane abandoned mid-stall holds up neither the next test nor the JVM's exit.
+     */
+    private static final Supplier<String> NOTHING = () -> {
+        try {
+            SILENT.await();
+            return "";
+        } catch (InterruptedException stopping) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("the silent stream was interrupted", stopping);
+        }
+    };
 
     private static class Notes implements Trace {
         final List<String> thoughts = new ArrayList<>();
 
+        /**
+         * All three columns, because the tokens this file is about now arrive in two of them.
+         *
+         * <p>The wrapper this replaced had one buffer and put it in the middle column. The
+         * accumulator keeps the thinking and the answer apart, so a row that dropped the third
+         * column would hide exactly half of what the stalled stream had already produced.
+         */
         public void thought(String f, String t, String c) {
-            thoughts.add(f + " :: " + t);
+            thoughts.add(f + " :: " + t + " :: " + c);
         }
 
         public void asked(String a, String p, String r) { }

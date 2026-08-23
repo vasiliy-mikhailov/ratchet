@@ -24,7 +24,7 @@ package tech.mikhailov.ratchet.llm;
  *
  * <p>So {@link #thinkingTokens} is the lever that decides whether there is an answer at all, and it
  * was fixed at 4,000 for everyone. Where it does not bind — a proxy that drops unknown fields will
- * swallow it silently — {@link Streamed.Truncated} is what makes the failure loud instead of
+ * swallow it silently — {@link Truncated} is what makes the failure loud instead of
  * returning an empty answer as though somebody had said it.
  *
  * @param temperature    zero for anything branched on; some models require 1.0 with reasoning on

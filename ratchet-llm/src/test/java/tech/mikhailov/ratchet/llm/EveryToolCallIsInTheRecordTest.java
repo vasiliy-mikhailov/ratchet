@@ -1,16 +1,12 @@
 package tech.mikhailov.ratchet.llm;
 
-import dev.langchain4j.agent.tool.ToolExecutionRequest;
-import dev.langchain4j.agent.tool.ToolSpecification;
-import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
-import dev.langchain4j.service.tool.ToolExecutor;
-
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import tech.mikhailov.ratchet.record.Trace;
 
@@ -33,7 +29,7 @@ class EveryToolCallIsInTheRecordTest {
         String huge = "x".repeat(50_000);
         Calls calls = new Calls();
 
-        String answered = run(Recording.at(one(request -> huge), calls, "agent:doer", 20_000));
+        String answered = run(Recording.at(one(call -> huge), calls, "agent:doer", 20_000));
 
         assertEquals(50_000, calls.results.get(0).length(), "the corpus wants everything");
         assertEquals(20_000 + "\n[truncated: 50000 chars total. Narrow the request if you need the rest.]"
@@ -46,7 +42,7 @@ class EveryToolCallIsInTheRecordTest {
     void aResultInsideTheBoundIsUntouched() {
         Calls calls = new Calls();
 
-        String answered = run(Recording.at(one(request -> "the answer, verbatim"), calls,
+        String answered = run(Recording.at(one(call -> "the answer, verbatim"), calls,
                 "agent:doer", 20_000));
 
         assertEquals("the answer, verbatim", answered);
@@ -56,10 +52,10 @@ class EveryToolCallIsInTheRecordTest {
 
     @Test
     void aThrowIsAnEventRatherThanAnAbsence() {
-        // The agent runtime catches this and hands the message to the model as the call's result,
-        // so without the record the model is told something the trace never mentions.
+        // Asking catches this and hands the message to the model as the call's result, so without
+        // the record the model is told something the trace never mentions.
         Calls calls = new Calls();
-        var tools = Recording.at(one(request -> {
+        var tools = Recording.at(one(call -> {
             throw new IllegalStateException("the tool blew up");
         }), calls, "agent:doer", 20_000);
 
@@ -71,39 +67,45 @@ class EveryToolCallIsInTheRecordTest {
 
     @Test
     void theDeclaredOrderSurvives() {
-        Map<ToolSpecification, ToolExecutor> tools = new LinkedHashMap<>();
-        for (String name : List.of("read", "grep", "edit")) {
-            tools.put(spec(name), (request, memoryId) -> name);
+        // SIX NAMES, WHERE THIS WAS WRITTEN WITH THREE, AND THE THREE ARE WHY. Under the
+        // specification type this replaces, a HashMap iterated read, grep, edit as grep, edit,
+        // read, so the ordered map was the only thing making this pass. Tool is a record, and its
+        // hash of those same three lands them in exactly the order they were declared: swapping
+        // Recording's LinkedHashMap for a HashMap left the test green, which is a test that
+        // asserts nothing. Six names put the difference back — hashed, they come out read, write,
+        // grep, glob, bash, edit — and make a second coincidence one permutation in seven hundred.
+        Map<Tool, Calling> tools = new LinkedHashMap<>();
+        for (String name : List.of("read", "grep", "edit", "write", "bash", "glob")) {
+            tools.put(spec(name), call -> name);
         }
 
         var wrapped = Recording.at(tools, new Calls(), "agent:doer", 20_000);
 
-        assertEquals(List.of("read", "grep", "edit"),
-                wrapped.keySet().stream().map(ToolSpecification::name).toList(),
+        assertEquals(List.of("read", "grep", "edit", "write", "bash", "glob"),
+                wrapped.keySet().stream().map(Tool::name).toList(),
                 "the order somebody wrote them down, not an accident of hashing");
     }
 
-    private static String run(Map<ToolSpecification, ToolExecutor> tools) {
+    /**
+     * Calls the first wrapped tool exactly the way the loop does.
+     *
+     * <p>One argument now. The executor this replaces took a conversation id beside the call, and
+     * this library configures no chat memory, so every caller passed a value the tool could not
+     * use — here it was the string "memory", which is as meaningful as the null the runtime sent.
+     */
+    private static String run(Map<Tool, Calling> tools) {
         var entry = tools.entrySet().iterator().next();
-        return entry.getValue().execute(
-                ToolExecutionRequest.builder().id("t").name(entry.getKey().name())
-                        .arguments("{\"path\":\"x\"}").build(),
-                "memory");
+        return entry.getValue().run(new Called("t", entry.getKey().name(), "{\"path\":\"x\"}"));
     }
 
-    private static Map<ToolSpecification, ToolExecutor> one(
-            java.util.function.Function<ToolExecutionRequest, String> answering) {
-        Map<ToolSpecification, ToolExecutor> tools = new LinkedHashMap<>();
-        tools.put(spec("read"), (request, memoryId) -> answering.apply(request));
+    private static Map<Tool, Calling> one(Function<Called, String> answering) {
+        Map<Tool, Calling> tools = new LinkedHashMap<>();
+        tools.put(spec("read"), answering::apply);
         return tools;
     }
 
-    private static ToolSpecification spec(String name) {
-        return ToolSpecification.builder()
-                .name(name)
-                .description("a tool that exists so there is something to record")
-                .parameters(JsonObjectSchema.builder().build())
-                .build();
+    private static Tool spec(String name) {
+        return Tool.of(name, "a tool that exists so there is something to record");
     }
 
     /** A trace that keeps only what a tool call wrote. */

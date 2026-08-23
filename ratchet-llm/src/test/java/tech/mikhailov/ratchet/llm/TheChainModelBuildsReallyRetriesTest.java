@@ -1,18 +1,10 @@
 package tech.mikhailov.ratchet.llm;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.exception.AuthenticationException;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 
 import org.junit.jupiter.api.Test;
 
@@ -20,7 +12,6 @@ import tech.mikhailov.ratchet.record.Trace;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * THE DECORATORS ARE PROVED TO BE INSTALLED, AND NOT ONLY TO WORK.
@@ -31,10 +22,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * assembles. A guard that is correct and not connected is not a guard.
  *
  * <p>This asks the question the other file cannot: given the chain {@code Model} actually assembles,
- * does a dropped connection get asked again? It runs through the real {@link Streamed}, the real
- * predicate and the real schedule. Only the three things that take wall-clock time — the jitter
- * draw, the wait and the clock — are handed in, because the production draw is up to a minute wide
- * and a test that lived through one would be a test somebody eventually deletes.
+ * does a dropped connection get asked again? It runs through the real predicate and the real
+ * schedule, and it feeds them the exact failures {@link Wire} throws: an
+ * {@link IllegalStateException} wrapping the {@link IOException} for a socket that died, and a
+ * {@link Refused} carrying the status for a request the endpoint turned away. The layer that used
+ * to sit between the two — a wrapper around a third party's streaming client, which turned a
+ * handler callback into a throw — is gone, because {@link Chat} is one blocking method and the
+ * streaming lives inside {@link Wire} now. What that buys this test is that the thing handed to
+ * {@code Model.wrap} here has the same shape as the thing production hands it.
+ *
+ * <p>Only the three things that take wall-clock time — the jitter draw, the wait and the clock —
+ * are handed in, because the production draw is up to a minute wide and a test that lived through
+ * one would be a test somebody eventually deletes.
  */
 class TheChainModelBuildsReallyRetriesTest {
 
@@ -44,9 +43,9 @@ class TheChainModelBuildsReallyRetriesTest {
         Notes notes = new Notes();
 
         Waits waits = new Waits();
-        ChatResponse answer = wrapped(endpoint, notes, plain(waits)).chat(ask());
+        Reply answer = wrapped(endpoint, notes, plain(waits)).answer(ask());
 
-        assertEquals("answer 2", answer.aiMessage().text(),
+        assertEquals("answer 2", answer.said(),
                 "the retry's answer, through the chain build() assembles");
         assertEquals(2, endpoint.calls.get(), "the endpoint really was asked twice");
         assertEquals(List.of(1L), waits.asked,
@@ -55,12 +54,19 @@ class TheChainModelBuildsReallyRetriesTest {
 
     @Test
     void aRefusedRequestIsNotRetriedByTheChainEither() {
-        Flaky endpoint = new Flaky(Integer.MAX_VALUE, AuthenticationException::new, "bad key");
+        // A 401 IN THE SHAPE THE CLIENT NOW REPORTS IT. This used to be a third party's typed
+        // exception, and the predicate had to test that type AND a raw status code because the
+        // mapping between them ran in an internal package with no promise it had run at all.
+        // Wire reads the status off the response, so what the chain is fed here is what production
+        // feeds it, and the judgement it is being proved to have installed is one comparison.
+        Flaky endpoint = new Flaky(Integer.MAX_VALUE, body -> new Refused(401, body), "bad key");
         Notes notes = new Notes();
 
-        assertThrows(RuntimeException.class,
-                () -> wrapped(endpoint, notes, plain(new Waits())).chat(ask()));
+        Refused refused = assertThrows(Refused.class,
+                () -> wrapped(endpoint, notes, plain(new Waits())).answer(ask()));
 
+        assertEquals(401, refused.status(),
+                "the status reaches the caller intact, which is the field the comparison is made on");
         assertEquals(1, endpoint.calls.get(),
                 "the production predicate is wired in, not just the production count");
     }
@@ -90,7 +96,7 @@ class TheChainModelBuildsReallyRetriesTest {
         Flaky endpoint = new Flaky(3);
         Waits waits = new Waits();
 
-        wrapped(endpoint, new Notes(), Retry.fromEnv().with(Backoff.jitteredBy(Backoff.fibonacciSeconds(), () -> 7)).with(waits)).chat(ask());
+        wrapped(endpoint, new Notes(), Retry.fromEnv().with(Backoff.jitteredBy(Backoff.fibonacciSeconds(), () -> 7)).with(waits)).answer(ask());
 
         assertEquals(List.of(8L, 8L, 9L), waits.asked,
                 "1+7, 1+7, 2+7 — the draw is added to the schedule, not substituted for it");
@@ -106,7 +112,7 @@ class TheChainModelBuildsReallyRetriesTest {
         Retry frozenEndpoint = plain(new Waits()).with(Now.steppingBy(Duration.ofMinutes(11)));
 
         assertThrows(RuntimeException.class,
-                () -> Model.wrap(endpoint, new Notes(), frozenEndpoint).chat(ask()));
+                () -> Model.wrap(endpoint, new Notes(), frozenEndpoint).answer(ask()));
 
         assertEquals(3, endpoint.calls.get(),
                 "three attempts and not ten: a frozen endpoint must not cost ten stalls");
@@ -123,9 +129,8 @@ class TheChainModelBuildsReallyRetriesTest {
     private static final Now FROZEN = Now.frozenAt(0);
 
     /** Every wrap in this file freezes the clock; the budget has its own test. */
-    private static dev.langchain4j.model.chat.ChatModel wrapped(
-            dev.langchain4j.model.chat.StreamingChatModel s, Trace t, Retry r) {
-        return Model.wrap(s, t, r.with(FROZEN));
+    private static Chat wrapped(Chat client, Trace t, Retry r) {
+        return Model.wrap(client, t, r.with(FROZEN));
     }
 
     /** Records what it was asked to wait for, and returns at once. */
@@ -140,19 +145,30 @@ class TheChainModelBuildsReallyRetriesTest {
 
     // ---------------------------------------------------------------- the fakes
 
-    private static ChatRequest ask() {
-        return ChatRequest.builder().messages(UserMessage.from("what is the ratchet")).build();
+    private static Ask ask() {
+        return Ask.of(List.of(Said.user("what is the ratchet")));
     }
 
-    /** A streaming endpoint that drops its first {@code drops} calls, then answers. */
-    private static final class Flaky implements StreamingChatModel {
+    /**
+     * An endpoint that drops its first {@code drops} calls, then answers.
+     *
+     * <p>One method, because {@link Chat} is one method. It used to implement a streaming client
+     * and report its failure through a handler callback, which is the shape the deleted adapter
+     * needed; the adapter is gone and the failure is simply thrown, exactly as {@link Wire} throws
+     * it.
+     */
+    private static final class Flaky implements Chat {
         final AtomicInteger calls = new AtomicInteger();
         private final int drops;
         private final java.util.function.Function<String, RuntimeException> failure;
         private final String because;
 
         Flaky(int drops) {
-            this(drops, IllegalStateException::new, "connection reset");
+            // What Wire raises when the socket dies: the IOException wrapped, because Chat is a
+            // functional interface and a checked throw would put a try/catch in every fake.
+            this(drops, dropped -> new IllegalStateException(
+                    "could not reach the endpoint: " + dropped, new IOException(dropped)),
+                    "connection reset");
         }
 
         Flaky(int drops, java.util.function.Function<String, RuntimeException> failure, String because) {
@@ -162,15 +178,12 @@ class TheChainModelBuildsReallyRetriesTest {
         }
 
         @Override
-        public void chat(ChatRequest request, StreamingChatResponseHandler handler) {
+        public Reply answer(Ask ask) {
             int call = calls.incrementAndGet();
             if (call <= drops) {
-                handler.onError(failure.apply(because));
-                return;
+                throw failure.apply(because);
             }
-            handler.onPartialResponse("ans");
-            handler.onCompleteResponse(
-                    ChatResponse.builder().aiMessage(AiMessage.from("answer " + call)).build());
+            return new Reply("answer " + call, "", List.of(), Ending.STOPPED, Spend.NONE);
         }
     }
 

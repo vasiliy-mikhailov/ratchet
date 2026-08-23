@@ -11,7 +11,7 @@ import java.time.Duration;
  * asserting, and which a test that really slept could only assert by taking eighty-eight seconds to
  * do it.
  *
- * <p>IT IS A SEAM AND NOT A CONVENIENCE. {@link Streamed}'s two bounds are {@code static final}
+ * <p>IT IS A SEAM AND NOT A CONVENIENCE. {@link Wire}'s two bounds are {@code static final}
  * durations read from the environment at class load, which is why neither of them has a test: there
  * is no way to shorten twenty minutes from inside a test that has already loaded the class. That
  * mistake is not repeated here.

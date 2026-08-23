@@ -23,16 +23,22 @@ one. That is the library: the reasons ship in the sources jar, not just the byte
 | artifact | depends on | what is in it |
 | --- | --- | --- |
 | `ratchet-core` | nothing outside the JDK | the flow, the record, the journal, the bounds |
-| `ratchet-llm` | `ratchet-core`, langchain4j | the model wiring, the tool loop, the listeners |
+| `ratchet-llm` | `ratchet-core` | the model wiring, the tool loop, the listeners |
 
-Take the first without taking a model client. The split is enforced by the compiler, not by a
-convention.
+Neither takes anything outside the JDK. As of 0.13.0 `ratchet-llm` speaks to an OpenAI-compatible
+endpoint directly: the request is written with ratchet's own JSON, the reply is read off the SSE
+frames, and the tool loop is fifteen lines. It used to take langchain4j and three artifacts behind
+it — 13 jars and 7.9 MB inherited by anyone who wanted so much as the retry schedule, including an
+NLP toolkit and a BPE tokenizer that nothing here has ever called.
+
+The split stays because the reason for it stays: core is the flow, the record and the journal; llm
+is everything that knows an endpoint exists. Take the first without compiling against the second.
 
 ```xml
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.12.0</version>
+  <version>0.13.0</version>
 </dependency>
 ```
 
@@ -46,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.12.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.13.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -80,13 +86,15 @@ for whether this attempt may pick a killed one up.
 `tech.mikhailov.ratchet.config` is what the run was told before the code started: `Env`, and
 `Prompts`, an on-disk store whose text replaces the code's own, per agent and per variant.
 
-`tech.mikhailov.ratchet.llm` is the langchain4j artifact. `Endpoint` is where the model is, as a
-value you can hand in rather than three environment variables a launcher has to rename. `Model` builds the client, with a
-thinking budget and a patience that is deliberately never the guard that fires. `Streamed` makes
-the guard time since the last token rather than time since the request. `Asking` is one agent: a
-system prompt, a closed set of tools, a bounded tool loop. `Reasoning` reads the reasoning off the
-wire that the client would otherwise discard, and latches once when it starts repeating itself.
-`Listening` records every exchange as the client saw it. `Retrying` asks a dropped call again, up to
+`tech.mikhailov.ratchet.llm` is the model layer. `Endpoint` is where the model is, as a value you
+can hand in rather than three environment variables a launcher has to rename. `Wire` is the client:
+one POST, one SSE reader, streaming always, so the liveness guard is time since the last TOKEN
+rather than time since the request — and its transport timeout is derived from the ceiling so it
+cannot be the guard that fires. `Chat`, `Ask`, `Reply`, `Said`, `Tool`, `Called` and `Calling` are
+the vocabulary; `Ending` says why the model stopped and `Spend` what it cost. `Model` builds the
+whole chain with a thinking budget. `Asking` is one agent: a system prompt, a closed set of tools,
+a bounded tool loop it owns. `Reasoning` latches once when the reasoning starts repeating itself.
+`Listening` records every exchange as it happened. `Retrying` asks a dropped call again, up to
 `RATCHET_ATTEMPTS` times, because the journal only preserves a whole node and a reset halfway
 through one destroys every call that node already paid for; the wait is a Fibonacci second plus a
 draw of up to `RATCHET_JITTER_SECONDS`, so a sweep's lanes do not all come back at the same instant,
@@ -97,20 +105,27 @@ call into the trace whole and returns it bounded.
 
 ### Taking one piece without the rest
 
-`Model` builds a whole chain. If you already have a `ChatModel` — your own client, your own
-listeners, an endpoint you resolve per call — take the parts instead:
+`Model` builds a whole chain. If you have your own client, your own bounds, or an endpoint you
+resolve per call, take the parts instead. `Chat` is one method, so anything can be one:
 
 ```java
-ChatModel retried = Retrying.on(yourModel, Retry.fibonacciSeconds(), trace);
-ChatModel guarded = Streamed.over(yourStreamingModel, trace);            // the stall guard alone
-ChatModel patient = Streamed.over(yourStreamingModel, trace,
-        Watch.shipped().withStall(Duration.ofMinutes(45)));              // ...with your own bounds
-Predicate<Throwable> worth = Retrying.transportFailures();       // just the judgement
+Chat retried = Retrying.on(yourChat, Retry.fibonacciSeconds(), trace);   // the retry alone
+Chat guarded = Wire.to(endpoint, sampling,                               // ...with your own bounds
+        Watch.shipped().withStall(Duration.ofMinutes(45)), true, trace);
+Predicate<Throwable> worth = Retrying.transportFailures();               // just the judgement
+Backoff schedule = Backoff.fibonacciSeconds();                           // just the schedule
 ```
 
-`transportFailures()` is the half that is hard to get right: it decides on langchain4j's
-`RetriableException`/`NonRetriableException` hierarchy and `HttpException.statusCode()`, refuses
-`Streamed.GaveUp` and `Streamed.Truncated`, and retries anything it does not recognise.
+The last two are why the dependency had to go: `Backoff` is a pure function of a list of failures
+and imports nothing but `java.time` and `java.util`, and it used to arrive with eight megabytes of
+model client behind it.
+
+`transportFailures()` is the half that is hard to get right. It now needs one comparison, because
+the client is ours and `Refused` carries the status it read off the response: 408, 429 and 5xx are
+worth another request, every other 4xx is the server saying the request itself is wrong. It refuses
+`GaveUp` (the ceiling, handing the slot back on purpose), `Truncated` (the identical request meets
+the identical budget), `Reasoning.LoopDetected` (greedy decoding cannot leave a cycle it entered)
+and an interruption, and retries anything it does not recognise.
 
 ### How the model answers
 
@@ -222,13 +237,13 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ## A note on the name
 
-`ratchet-llm` is named for what it is, the model layer, rather than for the library it currently
-uses. Naming a module after its dependency is a common enough convention, and langchain4j itself
-ships `langchain4j-anthropic` and `langchain4j-mistral-ai`, but that convention fits an integration
-whose whole purpose is the integration. This module's purpose is ratchet's model wiring, and
-langchain4j is how that is built today rather than what it is. A second binding, talking to an
-OpenAI-compatible endpoint directly, would sit beside it without either name becoming wrong.
+`ratchet-llm` was called `ratchet-langchain4j` until 0.2.0, and was renamed on the argument that a
+module should be named for what it is rather than for the library it happens to use. The paragraph
+that stood here ended: *"A second binding, talking to an OpenAI-compatible endpoint directly, would
+sit beside it without either name becoming wrong."*
 
-This project is not affiliated with, sponsored by, or endorsed by LangChain4j or LangChain, Inc.
-LangChain4j is an independent open-source project, and LANGCHAIN is a registered trademark of
-LangChain, Inc. It is named here only as a dependency.
+In 0.13.0 that binding was written, and it did not sit beside — it replaced. The name survived the
+change, which is the whole of the argument for having made it.
+
+ratchet no longer depends on langchain4j. It is an independent open-source project and this one is
+not affiliated with, sponsored by, or endorsed by it or by LangChain, Inc.
