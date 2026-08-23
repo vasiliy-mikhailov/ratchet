@@ -143,13 +143,25 @@ public final class Model {
         if (!extra.isEmpty()) {
             s.customParameters(extra);
         }
-        // RETRIED BENEATH EVERYTHING ELSE. A transport failure that reaches Insisting is read as an
-        // empty answer, and an empty answer from a critic approves; so the drop has to be handled
-        // here, where it is still recognisably a drop. Ten attempts on Fibonacci seconds — 88s of
-        // waiting in total — against a stage whose loss costs every model call that stage already
-        // made.
-        return new Retrying(new Streamed(s.build(), trace), ATTEMPTS, Backoff.fibonacciSeconds(),
-                Pause.SLEEPING, Retrying.transportFailures(), trace);
+        return wrap(s.build(), trace);
+    }
+
+    /**
+     * THE CHAIN ITSELF, APART FROM THE CLIENT, SO IT CAN BE ASSERTED WITHOUT AN ENDPOINT.
+     *
+     * <p>{@link #build} cannot be called without a real base URL and model name, which is why the
+     * decorators it installs were unprovable: the whole of {@link Retrying} could be deleted from
+     * the line below and every test in this module still passed. That is the more expensive half of
+     * reading configuration at class load — not that the value is untestable, but that the wiring
+     * it feeds is untestable with it.
+     *
+     * <p>RETRIED BENEATH EVERYTHING ELSE. A transport failure that reaches {@link Insisting} is
+     * read as an empty answer, and an empty answer from a critic approves; so the drop is handled
+     * here, where it is still recognisably a drop.
+     */
+    static ChatModel wrap(dev.langchain4j.model.chat.StreamingChatModel streaming, Trace trace) {
+        return new Retrying(new Streamed(streaming, trace), attempts(),
+                Backoff.fibonacciSeconds(), Pause.SLEEPING, Retrying.transportFailures(), trace);
     }
 
     /**
@@ -158,8 +170,30 @@ public final class Model {
      * <p>Settable, because a consumer whose endpoint is a local process on the same host has
      * nothing to gain from eighty-eight seconds of waiting, and one behind a shared proxy may want
      * more. One is a valid answer and means the behaviour before this existed.
+     *
+     * <p>Read per call rather than once at class load. A static final would be one number this
+     * process can never be asked about again, which is the thing that left {@link Streamed}'s two
+     * bounds without a test between them.
      */
-    private static final int ATTEMPTS = Integer.parseInt(setting("ATTEMPTS", "10"));
+    static int attempts() {
+        return attemptsFrom(setting("ATTEMPTS", "10"));
+    }
+
+    /**
+     * THE PARSE, AS A PURE FUNCTION, AND IT DOES NOT THROW.
+     *
+     * <p>A bad value used to be a {@link NumberFormatException} raised while the class was loading,
+     * which surfaces as a {@code NoClassDefFoundError} somewhere unrelated and takes a whole sweep
+     * down over a typo in an environment variable. A number nobody can read is a number this falls
+     * back from, and the run says what it is doing by doing the documented thing.
+     */
+    static int attemptsFrom(String said) {
+        try {
+            return Math.max(1, Integer.parseInt(said.trim()));
+        } catch (NumberFormatException notANumber) {
+            return 10;
+        }
+    }
 
     /**
      * WHAT TRAVELS IN THE REQUEST BODY BESIDE THE STANDARD FIELDS.
