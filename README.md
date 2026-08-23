@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.8.2</version>
+  <version>0.8.3</version>
 </dependency>
 ```
 
@@ -88,7 +88,22 @@ Model.forProducer(trace, Retry.fromEnv().with(Pause.NONE));   // for your own te
 
 `Retry` is a record of the four things that decide a retry, and `Backoff` is a function from every
 failure so far to the next wait — which is where a `Retry-After`-aware schedule goes, without this
-library having to grow one. `Pause.NONE` exists so that your suite can exercise retries without
+library having to grow one. Compose with the shipped schedule rather than replacing it:
+
+```java
+Backoff shipped = Retry.fromEnv().backoff();          // jittered Fibonacci
+Backoff honoursTheServer = failed -> {
+    Duration ours = shipped.before(failed);
+    Duration theirs = retryAfter(failed.get(failed.size() - 1));   // null when unsaid
+    return theirs == null || theirs.compareTo(ours) < 0
+            ? ours
+            : theirs.plusSeconds(draw());   // the server's floor, and still a draw on top
+};
+```
+
+A rule that answers a flat `Duration.ofSeconds(90)` throws away the growth and the draw, and every
+rate-limited lane then comes back in the same second — which is the pile-up the jitter is there to
+break, rebuilt one layer up. Whatever the server asks for is a floor, not a schedule. `Pause.NONE` exists so that your suite can exercise retries without
 living through them; the version everyone writes instead sleeps "just a little" to feel realistic,
 and a suite that sleeps is a suite somebody eventually deletes.
 

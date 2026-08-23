@@ -2,7 +2,9 @@ package tech.mikhailov.ratchet.llm;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.langchain4j.data.message.AiMessage;
@@ -81,16 +83,62 @@ class AConsumerCanChooseItsOwnRetryTest {
     void aConsumerCanSupplyItsOwnScheduleWhichIsWhereRetryAfterWouldGo() {
         Flaky endpoint = new Flaky(2, RateLimitException::new, "slow down");
         Waits waits = new Waits();
-        // What a Retry-After-aware schedule looks like from outside this package.
-        Backoff honoursTheServer = failed -> failed.get(failed.size() - 1)
-                instanceof RateLimitException ? Duration.ofSeconds(90) : Duration.ofSeconds(1);
+
+        // COMPOSES WITH THE SHIPPED SCHEDULE RATHER THAN REPLACING IT, which is the whole shape of
+        // this. A rule that answers a flat number throws away the growth AND the draw, and every
+        // rate-limited lane then returns at the same second — the herd the jitter exists to break.
+        // So: take whichever is longer, and keep a draw on top of the server's number too.
+        Backoff shipped = Retry.fromEnv().backoff();
+        Backoff honoursTheServer = failed -> {
+            Duration ours = shipped.before(failed);
+            Duration theirs = retryAfter(failed.get(failed.size() - 1));
+            return theirs == null || theirs.compareTo(ours) < 0
+                    ? ours
+                    : theirs.plusSeconds(DRAW.getAsInt());
+        };
 
         Model.wrap(endpoint, new Notes(),
                 Retry.fromEnv().with(honoursTheServer).with(waits), CLOCK).chat(ask());
 
-        assertEquals(List.of(90L, 90L), waits.asked,
-                "the consumer's rule decided the wait, with no change to Retrying");
+        assertEquals(2, waits.asked.size());
+        for (long wait : waits.asked) {
+            assertTrue(wait >= 90 && wait < 150,
+                    "the server's 90s is honoured and a draw sits on top of it: " + wait);
+        }
     }
+
+    @Test
+    void composingWithTheShippedScheduleKeepsTheLanesApart() {
+        // The failure mode of the obvious version: `? Duration.ofSeconds(90) : ...` answers the
+        // same number to every lane, so eight rate-limited lanes return in the same second.
+        Backoff shipped = Retry.fromEnv().backoff();
+        Backoff composed = failed -> {
+            Duration ours = shipped.before(failed);
+            Duration theirs = retryAfter(failed.get(failed.size() - 1));
+            return theirs == null || theirs.compareTo(ours) < 0
+                    ? ours : theirs.plusSeconds(DRAW.getAsInt());
+        };
+
+        List<Throwable> oneRateLimit = List.of(new RateLimitException("slow down"));
+        Set<Long> drawn = new HashSet<>();
+        for (int lane = 0; lane < 200; lane++) {
+            drawn.add(composed.before(oneRateLimit).toSeconds());
+        }
+
+        assertTrue(drawn.size() > 1,
+                "two hundred lanes must not all pick the same second; got " + drawn);
+        assertTrue(drawn.stream().allMatch(w -> w >= 90),
+                "and none of them may go before the server said: " + drawn);
+    }
+
+    /** What a real one would read off a {@code Retry-After} header; null when the server said nothing. */
+    private static Duration retryAfter(Throwable failure) {
+        return failure instanceof RateLimitException ? Duration.ofSeconds(90) : null;
+    }
+
+    /** Stands in for the consumer's own draw. */
+    private static final java.util.function.IntSupplier DRAW =
+            () -> java.util.concurrent.ThreadLocalRandom.current().nextInt(60);
 
     @Test
     void pauseNoneLetsAConsumerTestItsOwnPipelineWithoutSleeping() {
