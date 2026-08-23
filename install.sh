@@ -9,7 +9,10 @@
 #
 #   ./install.sh                      the newest tag, into ~/.m2
 #   ./install.sh v0.5.0               a specific one
-#   ./install.sh v0.11.0 -r ~/.m2-fitness    into a repository somebody else's build reads
+#   ./install.sh v0.11.2 -r ~/.m2-fitness/repository   into a repository another build reads
+#
+# `-r` becomes -Dmaven.repo.local, which wants the REPOSITORY directory, not the `.m2` above it.
+# The example in 0.11.1 said `~/.m2-fitness` and would have installed a directory level too high.
 #
 # It puts the checkout back where it found it, including when the build fails.
 
@@ -44,6 +47,18 @@ if ! git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
     exit 1
 fi
 
+# REFUSE EARLY ON A DIRTY TREE, in this script's own words. Without this the run gets as far as
+# printing "installing", then git says "Please commit your changes or stash them before you switch
+# branches" about a checkout the reader did not ask for and cannot see. Saying it first, and saying
+# which files, costs one command.
+dirty=$(git status --porcelain --untracked-files=no)
+if [ -n "$dirty" ]; then
+    echo "install.sh: this checkout has uncommitted changes, so it cannot switch to a tag:" >&2
+    echo "$dirty" | sed 's/^/  /' >&2
+    echo "install.sh: commit or stash them, or run this from a fresh clone." >&2
+    exit 1
+fi
+
 # WHERE TO PUT IT BACK. A detached HEAD left behind by a failed build is a worse outcome than the
 # failure, because the next person's `git pull` reports something baffling.
 was=$(git symbolic-ref -q --short HEAD || git rev-parse HEAD)
@@ -60,7 +75,11 @@ set -- -B -DskipTests install
 # unconditionally, so a build that failed printed the word "installing" and then nothing at all —
 # which is the silent-failure shape this whole repository exists to argue against, reproduced in
 # the script that closes the issue about it.
-log=$(mktemp -t ratchet-install)
+# NOT `mktemp -t ratchet-install`. BSD appends the X's itself; GNU coreutils requires at least
+# three trailing X in the template and exits 1 without them — so the one-command route added in
+# 0.11.1 died on Debian and Ubuntu, which is where most consumers are, at the point where the
+# checkout had already happened. Written and tested on a Mac, reported from Linux the same day.
+log=$(mktemp "${TMPDIR:-/tmp}/ratchet-install.XXXXXX")
 if ! mvn "$@" >"$log" 2>&1; then
     echo "install.sh: the build failed. The last of it:" >&2
     tail -25 "$log" >&2

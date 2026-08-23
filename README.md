@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.11.1</version>
+  <version>0.11.2</version>
 </dependency>
 ```
 
@@ -46,10 +46,12 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.11.1 -r ~/.m2-fitness     # into a repository another build reads
+./install.sh v0.11.2 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
-Every version from `0.1.0` onward has a tag, so any of them can be installed this way. The script
+`-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
+directory above it. Every version from `0.1.0` onward has a tag, so any of them can be installed
+this way. The script
 checks the jars actually landed before it says so — a build that succeeded and a version a consumer
 can resolve are different claims — and it puts your checkout back where it found it, including when
 the build fails.
