@@ -189,7 +189,7 @@ class AFlakyEndpointIsAskedAgainTest {
 
         assertThrows(IllegalStateException.class, () -> new Retrying(endpoint, 10,
                 Duration.ofMinutes(30), Backoff.fibonacciSeconds(), interrupted,
-                Retrying.transportFailures(), CLOCK, new Notes()).chat(ask()));
+                Retrying.transportFailures(), FROZEN, new Notes()).chat(ask()));
 
         assertEquals(1, endpoint.calls.get(), "a lane being stopped must stop, not serve out 88s");
         assertTrue(Thread.interrupted(), "and the interrupt is put back for whatever checks it next");
@@ -244,7 +244,7 @@ class AFlakyEndpointIsAskedAgainTest {
         };
 
         new Retrying(endpoint, 10, Duration.ofMinutes(30), watching, new Waits(),
-                Retrying.transportFailures(), CLOCK, new Notes()).chat(ask());
+                Retrying.transportFailures(), FROZEN, new Notes()).chat(ask());
 
         assertEquals(3, seen.size(), "consulted once before each retry");
         assertEquals(List.of(1, 2, 3), seen.stream().map(List::size).toList(),
@@ -263,19 +263,19 @@ class AFlakyEndpointIsAskedAgainTest {
         };
 
         new Retrying(endpoint, 10, Duration.ofMinutes(30), meddling, new Waits(),
-                Retrying.transportFailures(), CLOCK, new Notes()).chat(ask());
+                Retrying.transportFailures(), FROZEN, new Notes()).chat(ask());
 
         assertEquals(3, endpoint.calls.get());
     }
 
     /** A clock that does not move, so the budget never fires in the tests that are not about it. */
-    private static final java.util.function.LongSupplier CLOCK = () -> 0L;
+    private static final Now FROZEN = Now.frozenAt(0);
 
     // ---------------------------------------------------------------- the fakes
 
     private static ChatModel retrying(ChatModel inner, int attempts, Pause pause, Trace trace) {
         return new Retrying(inner, attempts, Duration.ofMinutes(30), Backoff.fibonacciSeconds(),
-                pause, Retrying.transportFailures(), CLOCK, trace);
+                pause, Retrying.transportFailures(), FROZEN, trace);
     }
 
     private static ChatRequest ask() {

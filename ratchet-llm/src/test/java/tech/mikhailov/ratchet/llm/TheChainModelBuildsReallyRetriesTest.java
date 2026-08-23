@@ -44,7 +44,7 @@ class TheChainModelBuildsReallyRetriesTest {
         Notes notes = new Notes();
 
         Waits waits = new Waits();
-        ChatResponse answer = Model.wrap(endpoint, notes, plain(waits), CLOCK).chat(ask());
+        ChatResponse answer = wrapped(endpoint, notes, plain(waits)).chat(ask());
 
         assertEquals("answer 2", answer.aiMessage().text(),
                 "the retry's answer, through the chain build() assembles");
@@ -59,7 +59,7 @@ class TheChainModelBuildsReallyRetriesTest {
         Notes notes = new Notes();
 
         assertThrows(RuntimeException.class,
-                () -> Model.wrap(endpoint, notes, plain(new Waits()), CLOCK).chat(ask()));
+                () -> wrapped(endpoint, notes, plain(new Waits())).chat(ask()));
 
         assertEquals(1, endpoint.calls.get(),
                 "the production predicate is wired in, not just the production count");
@@ -90,7 +90,7 @@ class TheChainModelBuildsReallyRetriesTest {
         Flaky endpoint = new Flaky(3);
         Waits waits = new Waits();
 
-        Model.wrap(endpoint, new Notes(), Retry.fromEnv().with(Backoff.jitteredBy(Backoff.fibonacciSeconds(), () -> 7)).with(waits), CLOCK).chat(ask());
+        wrapped(endpoint, new Notes(), Retry.fromEnv().with(Backoff.jitteredBy(Backoff.fibonacciSeconds(), () -> 7)).with(waits)).chat(ask());
 
         assertEquals(List.of(8L, 8L, 9L), waits.asked,
                 "1+7, 1+7, 2+7 — the draw is added to the schedule, not substituted for it");
@@ -99,13 +99,14 @@ class TheChainModelBuildsReallyRetriesTest {
     @Test
     void theWholeSequenceStopsAtTheBudgetHoweverManyAttemptsAreLeft() {
         Flaky endpoint = new Flaky(Integer.MAX_VALUE);
-        // A clock that jumps eleven minutes every time it is read, standing in for an endpoint that
+        // Eleven minutes pass every time the clock is read, standing in for an endpoint that
         // freezes and costs a full stall per attempt. The thirty-minute budget is then spent long
-        // before the ten attempts are.
-        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
-        java.util.function.LongSupplier frozen = () -> clock.getAndAdd(Duration.ofMinutes(11).toMillis());
+        // before the ten attempts are — and this is the shipped helper, so a consumer writes the
+        // same test the same way.
+        Retry frozenEndpoint = plain(new Waits()).with(Now.steppingBy(Duration.ofMinutes(11)));
 
-        assertThrows(RuntimeException.class, () -> Model.wrap(endpoint, new Notes(), plain(new Waits()), frozen).chat(ask()));
+        assertThrows(RuntimeException.class,
+                () -> Model.wrap(endpoint, new Notes(), frozenEndpoint).chat(ask()));
 
         assertEquals(3, endpoint.calls.get(),
                 "three attempts and not ten: a frozen endpoint must not cost ten stalls");
@@ -119,7 +120,13 @@ class TheChainModelBuildsReallyRetriesTest {
     }
 
     /** A clock that does not move, so the budget never fires in the tests that are not about it. */
-    private static final java.util.function.LongSupplier CLOCK = () -> 0L;
+    private static final Now FROZEN = Now.frozenAt(0);
+
+    /** Every wrap in this file freezes the clock; the budget has its own test. */
+    private static dev.langchain4j.model.chat.ChatModel wrapped(
+            dev.langchain4j.model.chat.StreamingChatModel s, Trace t, Retry r) {
+        return Model.wrap(s, t, r.with(FROZEN));
+    }
 
     /** Records what it was asked to wait for, and returns at once. */
     private static final class Waits implements Pause {

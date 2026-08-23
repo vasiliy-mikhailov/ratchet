@@ -104,7 +104,7 @@ final class Retrying implements ChatModel {
     private final Backoff backoff;
     private final Pause pause;
     private final Predicate<Throwable> retryable;
-    private final java.util.function.LongSupplier now;
+    private final Now now;
     private final Trace trace;
 
     /**
@@ -119,7 +119,7 @@ final class Retrying implements ChatModel {
      * @param now      the clock, handed in so the budget has a test that does not take an hour
      */
     Retrying(ChatModel inner, int attempts, Duration budget, Backoff backoff, Pause pause,
-             Predicate<Throwable> retryable, java.util.function.LongSupplier now, Trace trace) {
+             Predicate<Throwable> retryable, Now now, Trace trace) {
         if (attempts < 1) {
             throw new IllegalArgumentException("attempts must be at least 1, not " + attempts);
         }
@@ -140,7 +140,7 @@ final class Retrying implements ChatModel {
 
     @Override
     public ChatResponse doChat(ChatRequest request) {
-        long deadline = now.getAsLong() + budget.toMillis();
+        long deadline = now.millis() + budget.toMillis();
         // THE HISTORY, KEPT BECAUSE THE SCHEDULE IS ENTITLED TO SEE IT. A Backoff that can look at
         // every failure so far can tell nine identical rate limits from nine different transport
         // errors; one that is handed a count cannot, and has to answer both the same way.
@@ -157,7 +157,7 @@ final class Retrying implements ChatModel {
                 // never the waiting — it is the attempt itself, sitting on a stalled socket for
                 // twenty minutes. Asking before would let a call that has already spent the whole
                 // budget start another one.
-                if (now.getAsLong() >= deadline) {
+                if (now.millis() >= deadline) {
                     say(attempt, "spent " + budget.toMinutes() + "m of retries", failed);
                     throw failed;
                 }

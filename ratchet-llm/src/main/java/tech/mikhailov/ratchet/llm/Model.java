@@ -162,7 +162,7 @@ public final class Model {
         if (!extra.isEmpty()) {
             s.customParameters(extra);
         }
-        return wrap(s.build(), trace, retry, System::currentTimeMillis);
+        return wrap(s.build(), trace, retry);
     }
 
     /**
@@ -179,7 +179,7 @@ public final class Model {
      * here, where it is still recognisably a drop.
      */
     static ChatModel wrap(dev.langchain4j.model.chat.StreamingChatModel streaming, Trace trace) {
-        return wrap(streaming, trace, Retry.fromEnv(), System::currentTimeMillis);
+        return wrap(streaming, trace, Retry.fromEnv());
     }
 
     /**
@@ -191,9 +191,9 @@ public final class Model {
      * change that silently undoes what it is for.
      */
     static ChatModel wrap(dev.langchain4j.model.chat.StreamingChatModel streaming, Trace trace,
-                          Retry retry, java.util.function.LongSupplier now) {
+                          Retry retry) {
         return new Retrying(new Streamed(streaming, trace), retry.attempts(), retry.budget(),
-                retry.backoff(), retry.pause(), retry.worthRetrying(), now, trace);
+                retry.backoff(), retry.pause(), retry.worthRetrying(), retry.now(), trace);
     }
 
     /**
@@ -204,8 +204,17 @@ public final class Model {
      * across the early waits, where the schedule itself is only a second or two apart.
      */
     static int jitterSeconds() {
-        int spread = attemptsFrom(setting("JITTER_SECONDS", "60"));
-        return java.util.concurrent.ThreadLocalRandom.current().nextInt(spread);
+        return draw(jitterSpread());
+    }
+
+    /** How wide the draw is, as a number rather than a draw, so a caller can pin it. */
+    static int jitterSpread() {
+        return attemptsFrom(setting("JITTER_SECONDS", "60"));
+    }
+
+    /** One draw in {@code [0, spread)}; a spread of zero or less means no draw at all. */
+    static int draw(int spread) {
+        return spread <= 0 ? 0 : java.util.concurrent.ThreadLocalRandom.current().nextInt(spread);
     }
 
     /**

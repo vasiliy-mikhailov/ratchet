@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.8.3</version>
+  <version>0.9.0</version>
 </dependency>
 ```
 
@@ -80,10 +80,18 @@ call into the trace whole and returns it bounded.
 `Model.forProducer(trace)` takes the shipped policy. `Model.forProducer(trace, retry)` takes yours:
 
 ```java
-Model.forProducer(trace, Retry.none());            // one attempt, as before this existed
-Model.forProducer(trace, Retry.local());           // a flat second, no jitter, for a local endpoint
-Model.forProducer(trace, Retry.times(3));          // the shipped schedule, three attempts
-Model.forProducer(trace, Retry.fromEnv().with(Pause.NONE));   // for your own tests
+Model.forProducer(trace, Retry.fibonacciSeconds());   // the shipped shape, named: 10 attempts,
+                                                     // 1 1 2 3 5 8 13 21 34 + a draw, 30m budget
+Model.forProducer(trace, Retry.fibonacciSeconds(3)); // the same, three attempts
+Model.forProducer(trace, Retry.none());              // one attempt, as before this existed
+Model.forProducer(trace, Retry.local());             // a flat second, no jitter, same-host endpoint
+Model.forProducer(trace, Retry.fromEnv());           // the shipped shape, numbers overridable by env
+
+// and in your own tests — the whole schedule, none of the waiting, and time you control
+Model.forProducer(trace, Retry.fibonacciSeconds()
+        .withBudget(Duration.ofMinutes(5))
+        .with(Pause.NONE)                            // waits return at once
+        .with(Now.steppingBy(Duration.ofMinutes(2))));  // ...but the budget still runs out
 ```
 
 `Retry` is a record of the four things that decide a retry, and `Backoff` is a function from every
@@ -105,7 +113,10 @@ A rule that answers a flat `Duration.ofSeconds(90)` throws away the growth and t
 rate-limited lane then comes back in the same second — which is the pile-up the jitter is there to
 break, rebuilt one layer up. Whatever the server asks for is a floor, not a schedule. `Pause.NONE` exists so that your suite can exercise retries without
 living through them; the version everyone writes instead sleeps "just a little" to feel realistic,
-and a suite that sleeps is a suite somebody eventually deletes.
+and a suite that sleeps is a suite somebody eventually deletes. `Now` is the third seam and the one
+that is easy to leave out: with `Pause.NONE` alone no time passes at all, so a budget can never be
+reached and the branch that ends a hanging endpoint is never exercised. `Now.steppingBy` moves the
+clock every time it is read, which is what an attempt sitting on a stalled socket does.
 
 ## The shortest working pipeline
 

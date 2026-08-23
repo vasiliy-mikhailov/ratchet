@@ -42,7 +42,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(3);
 
         assertThrows(RuntimeException.class,
-                () -> Model.wrap(endpoint, new Notes(), Retry.none(), CLOCK).chat(ask()));
+                () -> wrapped(endpoint, new Notes(), Retry.none()).chat(ask()));
 
         assertEquals(1, endpoint.calls.get(), "asked once, exactly as before Retrying existed");
         // BOTH HALVES, because either alone would hold if the other were broken: none() refuses
@@ -58,7 +58,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(2);
         Waits waits = new Waits();
 
-        Model.wrap(endpoint, new Notes(), Retry.local().with(waits), CLOCK).chat(ask());
+        wrapped(endpoint, new Notes(), Retry.local().with(waits)).chat(ask());
 
         assertEquals(3, endpoint.calls.get());
         assertEquals(List.of(1L, 1L), waits.asked,
@@ -70,8 +70,8 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(Integer.MAX_VALUE);
         Waits waits = new Waits();
 
-        assertThrows(RuntimeException.class, () -> Model.wrap(endpoint, new Notes(),
-                Retry.times(3).with(waits), CLOCK).chat(ask()));
+        assertThrows(RuntimeException.class, () -> wrapped(endpoint, new Notes(),
+                Retry.times(3).with(waits)).chat(ask()));
 
         assertEquals(3, endpoint.calls.get(), "three attempts, not the default ten");
         assertEquals(2, waits.asked.size());
@@ -97,8 +97,8 @@ class AConsumerCanChooseItsOwnRetryTest {
                     : theirs.plusSeconds(DRAW.getAsInt());
         };
 
-        Model.wrap(endpoint, new Notes(),
-                Retry.fromEnv().with(honoursTheServer).with(waits), CLOCK).chat(ask());
+        wrapped(endpoint, new Notes(),
+                Retry.fromEnv().with(honoursTheServer).with(waits)).chat(ask());
 
         assertEquals(2, waits.asked.size());
         for (long wait : waits.asked) {
@@ -145,7 +145,7 @@ class AConsumerCanChooseItsOwnRetryTest {
         Flaky endpoint = new Flaky(4);
         long before = System.nanoTime();
 
-        Model.wrap(endpoint, new Notes(), Retry.fromEnv().with(Pause.NONE), CLOCK).chat(ask());
+        wrapped(endpoint, new Notes(), Retry.fromEnv().with(Pause.NONE)).chat(ask());
 
         long tookMillis = (System.nanoTime() - before) / 1_000_000;
         assertEquals(5, endpoint.calls.get());
@@ -154,9 +154,80 @@ class AConsumerCanChooseItsOwnRetryTest {
     }
 
     @Test
+    void theShippedShapeCanBeNamedWithoutKnowingWhereItsNumbersComeFrom() {
+        Retry named = Retry.fibonacciSeconds();
+
+        assertEquals(10, named.attempts());
+        assertEquals(Duration.ofMinutes(30), named.budget());
+        assertEquals(Retry.fromEnv().attempts(), named.attempts(),
+                "same as fromEnv with nothing set, which is the whole claim");
+    }
+
+    @Test
+    void theNamedShapeIsNotChangedUnderneathYouByTheEnvironment() {
+        // The reason it exists beside fromEnv: a reproducible default. Pinned by construction —
+        // fibonacciSeconds(int, int, Duration) reads no setting at all.
+        Retry pinned = Retry.fibonacciSeconds(3, 0, Duration.ofMinutes(1));
+        Waits waits = new Waits();
+        Flaky endpoint = new Flaky(Integer.MAX_VALUE);
+
+        assertThrows(RuntimeException.class,
+                () -> wrapped(endpoint, new Notes(), pinned.with(waits)).chat(ask()));
+
+        assertEquals(3, endpoint.calls.get());
+        assertEquals(List.of(1L, 1L), waits.asked,
+                "a spread of zero is no draw, so the bare Fibonacci shows through");
+    }
+
+    @Test
+    void aSpreadOfZeroIsTheOnlyWayToGetTheBareScheduleAndItIsWrongForASweep() {
+        Retry oneLane = Retry.fibonacciSeconds(6, 0, Duration.ofMinutes(30));
+        Waits waits = new Waits();
+        Flaky endpoint = new Flaky(Integer.MAX_VALUE);
+
+        assertThrows(RuntimeException.class,
+                () -> wrapped(endpoint, new Notes(), oneLane.with(waits)).chat(ask()));
+
+        assertEquals(List.of(1L, 1L, 2L, 3L, 5L), waits.asked,
+                "exactly Fibonacci — right for one lane, and the pile-up for eight");
+    }
+
+    @Test
+    void aConsumerCanTestItsOwnGivingUpWithoutWaitingForTheBudget() {
+        // THE CASE THAT WAS UNTESTABLE. With Pause.NONE alone no time passes, so a budget is never
+        // reached and the branch that ends a hanging endpoint is never exercised; with a real
+        // pause the test takes the budget. The clock is the third seam, and this is what it buys.
+        Flaky frozen = new Flaky(Integer.MAX_VALUE);
+        Retry fiveMinutes = Retry.fibonacciSeconds()
+                .withBudget(Duration.ofMinutes(5))
+                .with(Pause.NONE)
+                .with(Now.steppingBy(Duration.ofMinutes(2)));
+
+        assertThrows(RuntimeException.class,
+                () -> Model.wrap(frozen, new Notes(), fiveMinutes).chat(ask()));
+
+        assertTrue(frozen.calls.get() < 10,
+                "the five-minute budget stopped it, not the ten attempts: " + frozen.calls.get());
+    }
+
+    @Test
+    void aFrozenClockMeansTheBudgetNeverEndsAnything() {
+        Flaky flaky = new Flaky(3);
+        Retry noTimePasses = Retry.fibonacciSeconds()
+                .withBudget(Duration.ofMillis(1))
+                .with(Pause.NONE)
+                .with(Now.frozenAt(0));
+
+        Model.wrap(flaky, new Notes(), noTimePasses).chat(ask());
+
+        assertEquals(4, flaky.calls.get(),
+                "a millisecond budget is never spent when the clock does not move");
+    }
+
+    @Test
     void aPolicyThatWouldAskNothingIsRefusedAtTheDoor() {
         assertThrows(IllegalArgumentException.class,
-                () -> new Retry(0, Duration.ZERO, Backoff.immediate(), t -> true, Pause.NONE),
+                () -> new Retry(0, Duration.ZERO, Backoff.immediate(), t -> true, Pause.NONE, Now.SYSTEM),
                 "zero attempts asks the model nothing at all, which is never what anyone meant");
     }
 
@@ -174,7 +245,13 @@ class AConsumerCanChooseItsOwnRetryTest {
 
     // ---------------------------------------------------------------- the fakes
 
-    private static final java.util.function.LongSupplier CLOCK = () -> 0L;
+    private static final Now FROZEN = Now.frozenAt(0);
+
+    /** Every wrap in this file freezes the clock; the budget has its own test. */
+    private static dev.langchain4j.model.chat.ChatModel wrapped(
+            dev.langchain4j.model.chat.StreamingChatModel s, Trace t, Retry r) {
+        return Model.wrap(s, t, r.with(FROZEN));
+    }
 
     private static ChatRequest ask() {
         return ChatRequest.builder().messages(UserMessage.from("what is the ratchet")).build();
