@@ -41,7 +41,26 @@ import tech.mikhailov.ratchet.record.Trace;
  * ten-attempt schedule can be asserted in milliseconds. {@link Model} is the only place that
  * chooses the production values.
  */
-final class Retrying implements ChatModel {
+public final class Retrying implements ChatModel {
+
+    /**
+     * WRAP A {@link ChatModel} YOU ALREADY HAVE.
+     *
+     * <p>The door two consumers asked for, in ratchet#2 and ratchet#5, and the reason both gave is
+     * the same: {@link Model} builds the client itself, and a consumer that resolves its endpoint
+     * from a settings file per call, or sets a temperature per stage, or already has its own
+     * listeners and its own silence ceiling, cannot take it. Adopting {@code Model} to reach the
+     * retry meant rewriting everything around the one part they wanted.
+     *
+     * <p>ratchet#2 puts the important half well: the judgement about which failures are worth
+     * another attempt is harder to get right than the loop around it. That judgement is
+     * {@link #transportFailures()}, and it is public for the same reason.
+     */
+    public static ChatModel on(ChatModel around, Retry retry, Trace trace) {
+        return new Retrying(around, retry.attempts(), retry.budget(), retry.backoff(),
+                retry.pause(), retry.worthRetrying(), retry.now(), trace);
+    }
+
 
     /**
      * WHAT IS WORTH ASKING AGAIN, DECIDED ON TYPES AND A STATUS CODE.
@@ -65,7 +84,7 @@ final class Retrying implements ChatModel {
      * <p>Anything unrecognised is RETRIED. The cost of retrying something hopeless is one bounded
      * sequence; the cost of not retrying something transient is a whole stage.
      */
-    static Predicate<Throwable> transportFailures() {
+    public static Predicate<Throwable> transportFailures() {
         return failure -> {
             for (Throwable at = failure; at != null; at = at.getCause()) {
                 if (at instanceof Streamed.GaveUp || at instanceof InterruptedException) {

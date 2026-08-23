@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.10.1</version>
+  <version>0.11.0</version>
 </dependency>
 ```
 
@@ -75,6 +75,34 @@ and `RATCHET_RETRY_BUDGET_MINUTES` bounds the whole sequence because a count of 
 ten stalls is three and a half hours. `Insisting` re-asks an agent that answered nothing — and sits
 above `Retrying`, so a dead connection is never read as an answer. `Recording` writes every tool
 call into the trace whole and returns it bounded.
+
+### Taking one piece without the rest
+
+`Model` builds a whole chain. If you already have a `ChatModel` — your own client, your own
+listeners, an endpoint you resolve per call — take the parts instead:
+
+```java
+ChatModel retried = Retrying.on(yourModel, Retry.fibonacciSeconds(), trace);
+ChatModel guarded = Streamed.over(yourStreamingModel, trace);   // the stall guard alone
+Predicate<Throwable> worth = Retrying.transportFailures();       // just the judgement
+```
+
+`transportFailures()` is the half that is hard to get right: it decides on langchain4j's
+`RetriableException`/`NonRetriableException` hierarchy and `HttpException.statusCode()`, refuses
+`Streamed.GaveUp` and `Streamed.Truncated`, and retries anything it does not recognise.
+
+### How the model answers
+
+```java
+Model.forProducer(trace, endpoint, retry, Sampling.deterministic());
+Model.forProducer(trace, endpoint, retry, Sampling.asTheModelRequires(1.0));  // Qwen with reasoning
+Sampling.deterministic().withThinkingTokens(500);   // leave room for an answer
+```
+
+Temperature is zero by default and that reason has not changed — most replies here are branched on.
+But some models require 1.0 with reasoning on, and a hardcoded default their own documentation
+forbids is a refusal rather than a default. `maxTokens` and `thinkingTokens` share one pool on the
+server, so `Sampling` refuses a reasoning budget that leaves no room for a reply.
 
 ### Choosing the retry
 

@@ -39,7 +39,20 @@ import tech.mikhailov.ratchet.record.Trace;
  * <p>The reasoning is captured at the transport by {@link Reasoning}, not here: this server names
  * the field in a way the client does not read, so the handler's thinking callback never fires.
  */
-final class Streamed implements ChatModel {
+public final class Streamed implements ChatModel {
+
+    /**
+     * THE LIVENESS GUARD OVER A STREAMING MODEL YOU ALREADY HAVE.
+     *
+     * <p>Public for the same reason {@link Retrying#on} is: a consumer with its own client wanted
+     * the guard without the client. What it buys is the distinction this whole class exists for —
+     * time since the last TOKEN rather than time since the request, so a long generation is never
+     * cut and a dead socket is still noticed.
+     */
+    public static ChatModel over(StreamingChatModel streaming, Trace trace) {
+        return new Streamed(streaming, trace);
+    }
+
 
     /**
      * THE CEILING, AS A TYPE, BECAUSE IT IS THE ONE FAILURE HERE THAT MUST NOT BE RETRIED.
@@ -53,10 +66,10 @@ final class Streamed implements ChatModel {
      * other two exits stay {@link IllegalStateException}: they mean the same thing to a caller and
      * nothing yet needs to tell them apart.
      */
-    static final class GaveUp extends IllegalStateException {
+    public static final class GaveUp extends IllegalStateException {
         private static final long serialVersionUID = 1L;
 
-        GaveUp(String because) {
+        public GaveUp(String because) {
             super(because);
         }
     }
@@ -75,10 +88,10 @@ final class Streamed implements ChatModel {
      * Before this the runtime returned that empty string as the agent's answer, and a consumer that
      * writes what the agent returned wrote nothing over a file that had something in it.
      */
-    static final class Truncated extends IllegalStateException {
+    public static final class Truncated extends IllegalStateException {
         private static final long serialVersionUID = 1L;
 
-        Truncated(String because) {
+        public Truncated(String because) {
             super(because);
         }
     }

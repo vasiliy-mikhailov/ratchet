@@ -99,12 +99,23 @@ public final class Model {
         return forCritic(trace, endpoint, Retry.fromEnv());
     }
 
+    /** Everything chosen: where, how it retries, and how it answers. */
+    public static ChatModel forProducer(Trace trace, Endpoint endpoint, Retry retry,
+                                        Sampling sampling) {
+        return build(trace, true, endpoint, retry, sampling);
+    }
+
+    public static ChatModel forCritic(Trace trace, Endpoint endpoint, Retry retry,
+                                      Sampling sampling) {
+        return build(trace, true, endpoint, retry, sampling);
+    }
+
     public static ChatModel forProducer(Trace trace, Endpoint endpoint, Retry retry) {
-        return build(trace, true, endpoint, retry);
+        return build(trace, true, endpoint, retry, Sampling.fromEnv());
     }
 
     public static ChatModel forCritic(Trace trace, Endpoint endpoint, Retry retry) {
-        return build(trace, true, endpoint, retry);
+        return build(trace, true, endpoint, retry, Sampling.fromEnv());
     }
 
     /**
@@ -115,11 +126,11 @@ public final class Model {
      * wants to test its own pipeline without living through a real wait. See {@link Retry}.
      */
     public static ChatModel forProducer(Trace trace, Retry retry) {
-        return build(trace, true, Endpoint.fromEnv(), retry);
+        return build(trace, true, Endpoint.fromEnv(), retry, Sampling.fromEnv());
     }
 
     public static ChatModel forCritic(Trace trace, Retry retry) {
-        return build(trace, true, Endpoint.fromEnv(), retry);
+        return build(trace, true, Endpoint.fromEnv(), retry, Sampling.fromEnv());
     }
 
     /**
@@ -137,17 +148,18 @@ public final class Model {
     }
 
     public static ChatModel forRetry(Trace trace, Retry retry) {
-        return build(trace, false, Endpoint.fromEnv(), retry);
+        return build(trace, false, Endpoint.fromEnv(), retry, Sampling.fromEnv());
     }
 
     public static ChatModel forRetry(Trace trace, Endpoint endpoint, Retry retry) {
-        return build(trace, false, endpoint, retry);
+        return build(trace, false, endpoint, retry, Sampling.fromEnv());
     }
 
-    private static ChatModel build(Trace trace, boolean thinking, Endpoint endpoint, Retry retry) {
+    private static ChatModel build(Trace trace, boolean thinking, Endpoint endpoint,
+                                   Retry retry, Sampling sampling) {
         // The same first-non-blank chain as setting(), spelt with Env's own truth rules so there
         // is one place that decides what "yes" means.
-        boolean wantThinking = thinking && Env.flag("RATCHET_THINKING",
+        boolean wantThinking = thinking && sampling.thinks() && Env.flag("RATCHET_THINKING",
                 Env.flag("OC_THINKING", Env.flag("BJV_THINKING", true)));
         HttpClient.Version version = endpoint.secure()
                 ? HttpClient.Version.HTTP_2
@@ -165,8 +177,8 @@ public final class Model {
                 .baseUrl(endpoint.base())
                 .apiKey(endpoint.key())
                 .modelName(endpoint.model())
-                .temperature(0.0)
-                .maxTokens(MAX_TOKENS)
+                .temperature(sampling.temperature())
+                .maxTokens(sampling.maxTokens())
                 .timeout(PATIENCE)
                 .returnThinking(Boolean.TRUE);
         // UNDER EVERYTHING THE HARNESS CHOOSES TO RECORD. The listener sees the request as sent and
@@ -176,7 +188,7 @@ public final class Model {
             s.listeners(java.util.List.of(new Listening(trace)));
         }
 
-        java.util.Map<String, Object> extra = extras(wantThinking);
+        java.util.Map<String, Object> extra = extras(wantThinking, sampling);
         if (!extra.isEmpty()) {
             s.customParameters(extra);
         }
@@ -287,10 +299,10 @@ public final class Model {
      * reasons. A test can read this without reflecting into the client's internals, which is the
      * only way to check it that survives a library upgrade.
      */
-    static java.util.Map<String, Object> extras(boolean thinking) {
+    static java.util.Map<String, Object> extras(boolean thinking, Sampling sampling) {
         java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
-        if (THINKING_TOKENS > 0) {
-            extra.put("thinking_token_budget", THINKING_TOKENS);
+        if (sampling.thinkingTokens() > 0) {
+            extra.put("thinking_token_budget", sampling.thinkingTokens());
         }
         if (!thinking) {
             // The server template's own switch, not a prompt asking for brevity: an instruction

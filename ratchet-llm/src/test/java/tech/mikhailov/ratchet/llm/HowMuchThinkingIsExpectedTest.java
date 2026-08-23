@@ -39,7 +39,7 @@ class HowMuchThinkingIsExpectedTest {
      * is not what it is called and would not have survived a library upgrade if it were.
      */
     private static Map<String, Object> customParameters(boolean thinking) {
-        return Model.extras(thinking);
+        return Model.extras(thinking, Sampling.fromEnv());
     }
 
     @Test
