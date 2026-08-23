@@ -13,6 +13,7 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.PartialThinking;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.model.output.FinishReason;
 
 import tech.mikhailov.ratchet.config.Env;
 import tech.mikhailov.ratchet.record.Trace;
@@ -56,6 +57,28 @@ final class Streamed implements ChatModel {
         private static final long serialVersionUID = 1L;
 
         GaveUp(String because) {
+            super(because);
+        }
+    }
+
+    /**
+     * THE MODEL SPENT THE BUDGET THINKING AND HAD NOTHING LEFT TO SAY.
+     *
+     * <p>Its own type because it is neither of the two things it would otherwise be mistaken for. It
+     * is not a transport failure, so retrying the identical request costs another full budget to
+     * arrive at the identical wall. And it is emphatically not SILENCE: {@link Insisting} exists to
+     * re-ask a model that declined to answer, and a truncation handed to it is re-asked as though
+     * the model had nothing to say, when what happened is that it was cut off mid-thought.
+     *
+     * <p>Measured on this project's own endpoint, one prompt, no reasoning budget, a 3,000-token
+     * cap: 9,488 characters of reasoning, ZERO characters of content, {@code finish_reason: length}.
+     * Before this the runtime returned that empty string as the agent's answer, and a consumer that
+     * writes what the agent returned wrote nothing over a file that had something in it.
+     */
+    static final class Truncated extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        Truncated(String because) {
             super(because);
         }
     }
@@ -127,6 +150,17 @@ final class Streamed implements ChatModel {
                 throw new IllegalStateException("interrupted while streaming", e);
             }
             if (outcome instanceof ChatResponse response) {
+                // AN EMPTY ANSWER THAT RAN OUT OF ROOM IS NOT AN ANSWER. The finish reason has been
+                // on the response all along; nothing looked at it. Content that is blank because the
+                // budget was spent thinking is a truncation, and saying so is the difference between
+                // a run that stops and a run that quietly writes an empty string over real work.
+                String said = response.aiMessage() == null ? null : response.aiMessage().text();
+                if ((said == null || said.isBlank())
+                        && response.finishReason() == FinishReason.LENGTH) {
+                    throw new Truncated("the model reached the token limit before writing an answer"
+                            + "; all of it went on reasoning. Raise the completion budget or lower "
+                            + "the reasoning one (RATCHET_THINKING_TOKENS), or turn thinking off.");
+                }
                 return response;
             }
             if (outcome instanceof Throwable error) {

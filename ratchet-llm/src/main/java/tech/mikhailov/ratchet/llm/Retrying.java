@@ -71,6 +71,11 @@ final class Retrying implements ChatModel {
                 if (at instanceof Streamed.GaveUp || at instanceof InterruptedException) {
                     return false;
                 }
+                // A TRUNCATION IS NOT TRANSIENT. The identical request meets the identical budget,
+                // so ten attempts buy ten more full generations and the same empty answer.
+                if (at instanceof Streamed.Truncated) {
+                    return false;
+                }
                 if (at instanceof NonRetriableException) {
                     return false;
                 }
