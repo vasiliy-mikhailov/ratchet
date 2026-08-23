@@ -143,8 +143,23 @@ public final class Model {
         if (!extra.isEmpty()) {
             s.customParameters(extra);
         }
-        return new Streamed(s.build(), trace);
+        // RETRIED BENEATH EVERYTHING ELSE. A transport failure that reaches Insisting is read as an
+        // empty answer, and an empty answer from a critic approves; so the drop has to be handled
+        // here, where it is still recognisably a drop. Ten attempts on Fibonacci seconds — 88s of
+        // waiting in total — against a stage whose loss costs every model call that stage already
+        // made.
+        return new Retrying(new Streamed(s.build(), trace), ATTEMPTS, Backoff.fibonacciSeconds(),
+                Pause.SLEEPING, Retrying.transportFailures(), trace);
     }
+
+    /**
+     * How many times a model call is attempted before the stage is allowed to fail.
+     *
+     * <p>Settable, because a consumer whose endpoint is a local process on the same host has
+     * nothing to gain from eighty-eight seconds of waiting, and one behind a shared proxy may want
+     * more. One is a valid answer and means the behaviour before this existed.
+     */
+    private static final int ATTEMPTS = Integer.parseInt(setting("ATTEMPTS", "10"));
 
     /**
      * WHAT TRAVELS IN THE REQUEST BODY BESIDE THE STANDARD FIELDS.

@@ -41,6 +41,26 @@ import tech.mikhailov.ratchet.record.Trace;
 final class Streamed implements ChatModel {
 
     /**
+     * THE CEILING, AS A TYPE, BECAUSE IT IS THE ONE FAILURE HERE THAT MUST NOT BE RETRIED.
+     *
+     * <p>Every other exit from {@link #doChat} is a connection that stopped working, and a fresh
+     * connection is the answer to those. This one is the opposite: it fires on a stream that IS
+     * producing and has been for hours, and the whole point of it is to give the slot back. A
+     * retry would spend another ceiling discovering that again.
+     *
+     * <p>A type rather than a message, so {@link Retrying} does not have to match on English. The
+     * other two exits stay {@link IllegalStateException}: they mean the same thing to a caller and
+     * nothing yet needs to tell them apart.
+     */
+    static final class GaveUp extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        GaveUp(String because) {
+            super(because);
+        }
+    }
+
+    /**
      * How long a silent connection may stay silent.
      *
      * <p>Generous, because the first token can be a long way behind the request on a shared GPU
@@ -119,7 +139,7 @@ final class Streamed implements ChatModel {
                         + " minutes: the connection is not producing");
             }
             if (System.currentTimeMillis() > deadline) {
-                throw new IllegalStateException("still streaming after " + CEILING.toHours()
+                throw new GaveUp("still streaming after " + CEILING.toHours()
                         + "h; giving the lane back");
             }
         }
