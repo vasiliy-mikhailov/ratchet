@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 import tech.mikhailov.ratchet.record.Trace;
 
@@ -47,6 +48,40 @@ public final class Retrying implements Chat {
     public static Chat on(Chat around, Retry retry, Trace trace) {
         return new Retrying(around, retry.attempts(), retry.budget(), retry.backoff(),
                 retry.pause(), retry.worthRetrying(), retry.now(), trace);
+    }
+
+    /**
+     * THE SAME LOOP, AROUND ANYTHING AT ALL — because it never needed a model.
+     *
+     * <p>Asked for in ratchet#8 by a consumer whose agent runtime is a third party's
+     * ({@code com.deepagents:langchain4j-deepagents}), whose constructor takes a langchain4j
+     * {@code ChatModel} and a {@code Map<ToolSpecification, ToolExecutor>}. They do not own it and
+     * cannot make it take a {@link Chat}, so 0.13.0 left them with no door: {@link #on} is the only
+     * way in and it is spelled in terms of one call shape.
+     *
+     * <p>THEY WERE RIGHT AND THE MEASUREMENT IS ONE LINE. At v0.13.0 the whole of this class touched
+     * the message model in exactly one place — {@code inner.answer(ask)} — and everything around it
+     * is attempts, a budget, a schedule, a predicate and a trace note. A loop that is already
+     * agnostic and reachable only through one concrete type is a seam that stopped at the package
+     * boundary, which is the fifth time this library has done that and the fifth time a consumer
+     * found it rather than a test.
+     *
+     * <p>This is a SMALLER surface than {@link #on}, not a larger one: no message model in the
+     * signature, no langchain4j in the artifact, nothing about {@link Wire} affected. It also
+     * retries things that were never model calls — an HTTP fetch, a tool invocation, a push to a
+     * registry — with the schedule that has already been tested here.
+     *
+     * <p>The call is re-run whole on each attempt, so it must be safe to repeat. That is the same
+     * contract {@link #on} has always had and the reason {@link #transportFailures()} refuses a
+     * {@link Truncated}: some failures mean the identical request meets the identical wall.
+     *
+     * @param call  what to attempt, and what to attempt again
+     * @param retry the count, the budget, the schedule, the wait, the clock and the judgement
+     * @param trace where every attempt is recorded, or null for none
+     */
+    public static <T> Supplier<T> around(Supplier<T> call, Retry retry, Trace trace) {
+        return () -> attempt(call, retry.attempts(), retry.budget(), retry.backoff(), retry.pause(),
+                retry.worthRetrying(), retry.now(), trace);
     }
 
     /**
@@ -149,6 +184,18 @@ public final class Retrying implements Chat {
 
     @Override
     public Reply answer(Ask ask) {
+        return attempt(() -> inner.answer(ask), attempts, budget, backoff, pause, retryable, now,
+                trace);
+    }
+
+    /**
+     * THE LOOP ITSELF, AND IT NAMES NOTHING FROM THE MESSAGE MODEL.
+     *
+     * <p>Static and generic so {@link #around} and {@link #answer} are the same code rather than two
+     * copies that will eventually disagree about the budget.
+     */
+    private static <T> T attempt(Supplier<T> call, int attempts, Duration budget, Backoff backoff,
+                                 Pause pause, Predicate<Throwable> retryable, Now now, Trace trace) {
         long deadline = now.millis() + budget.toMillis();
         // THE HISTORY, KEPT BECAUSE THE SCHEDULE IS ENTITLED TO SEE IT. A Backoff that can look at
         // every failure so far can tell nine identical rate limits from nine different transport
@@ -156,7 +203,7 @@ public final class Retrying implements Chat {
         List<Throwable> failures = new ArrayList<>();
         for (int attempt = 1; attempt <= attempts; attempt++) {
             try {
-                return inner.answer(ask);
+                return call.get();
             } catch (RuntimeException failed) {
                 failures.add(failed);
                 if (attempt == attempts || !retryable.test(failed)) {
@@ -167,14 +214,15 @@ public final class Retrying implements Chat {
                 // twenty minutes. Asking before would let a call that has already spent the whole
                 // budget start another one.
                 if (now.millis() >= deadline) {
-                    say(attempt, "spent " + budget.toMinutes() + "m of retries", failed);
+                    say(trace, attempts, attempt, "spent " + budget.toMinutes()
+                            + "m of retries", failed);
                     throw failed;
                 }
                 Duration wait = backoff.before(List.copyOf(failures));
                 // EVERY ATTEMPT IS IN THE RECORD, including the ones that worked in the end. A
                 // retry nobody can see is an endpoint whose flakiness never shows up anywhere, and
                 // the first anyone hears of it is a bill or a lane that takes an hour.
-                say(attempt, wait, failed);
+                say(trace, attempts, attempt, "asking again in " + wait.toSeconds() + "s", failed);
                 try {
                     pause.of(wait);
                 } catch (InterruptedException stopping) {
@@ -189,11 +237,8 @@ public final class Retrying implements Chat {
                 : (RuntimeException) failures.get(failures.size() - 1);
     }
 
-    private void say(int attempt, Duration wait, RuntimeException failed) {
-        say(attempt, "asking again in " + wait.toSeconds() + "s", failed);
-    }
-
-    private void say(int attempt, String next, RuntimeException failed) {
+    private static void say(Trace trace, int attempts, int attempt, String next,
+                            RuntimeException failed) {
         if (trace == null) {
             return;
         }

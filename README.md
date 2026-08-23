@@ -25,7 +25,7 @@ one. That is the library: the reasons ship in the sources jar, not just the byte
 | `ratchet-core` | nothing outside the JDK | the flow, the record, the journal, the bounds |
 | `ratchet-llm` | `ratchet-core` | the model wiring, the tool loop, the listeners |
 
-Neither takes anything outside the JDK. As of 0.13.0 `ratchet-llm` speaks to an OpenAI-compatible
+Neither takes anything outside the JDK. As of 0.13.1 `ratchet-llm` speaks to an OpenAI-compatible
 endpoint directly: the request is written with ratchet's own JSON, the reply is read off the SSE
 frames, and the tool loop is fifteen lines. It used to take langchain4j and three artifacts behind
 it — 13 jars and 7.9 MB inherited by anyone who wanted so much as the retry schedule, including an
@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.13.0</version>
+  <version>0.13.1</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.13.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.13.1 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -110,11 +110,19 @@ resolve per call, take the parts instead. `Chat` is one method, so anything can 
 
 ```java
 Chat retried = Retrying.on(yourChat, Retry.fibonacciSeconds(), trace);   // the retry alone
+Supplier<T> any = Retrying.around(() -> yourCall(), retry, trace);       // ...around anything
 Chat guarded = Wire.to(endpoint, sampling,                               // ...with your own bounds
         Watch.shipped().withStall(Duration.ofMinutes(45)), true, trace);
 Predicate<Throwable> worth = Retrying.transportFailures();               // just the judgement
 Backoff schedule = Backoff.fibonacciSeconds();                           // just the schedule
 ```
+
+`around` is the same loop with no message model in the signature, asked for in ratchet#8 by a
+consumer whose agent runtime is a third party's and takes a langchain4j `ChatModel` they cannot
+change. Their measurement was that the whole of `Retrying` touched the message model on one line, so
+a loop that was already agnostic was reachable only through one concrete type. It retries things
+that were never model calls too — an HTTP fetch, a tool invocation, a push to a registry. The call
+is re-run whole, so it must be safe to repeat.
 
 The last two are why the dependency had to go: `Backoff` is a pure function of a list of failures
 and imports nothing but `java.time` and `java.util`, and it used to arrive with eight megabytes of
@@ -242,7 +250,7 @@ module should be named for what it is rather than for the library it happens to 
 that stood here ended: *"A second binding, talking to an OpenAI-compatible endpoint directly, would
 sit beside it without either name becoming wrong."*
 
-In 0.13.0 that binding was written, and it did not sit beside — it replaced. The name survived the
+In 0.13.1 that binding was written, and it did not sit beside — it replaced. The name survived the
 change, which is the whole of the argument for having made it.
 
 ratchet no longer depends on langchain4j. It is an independent open-source project and this one is

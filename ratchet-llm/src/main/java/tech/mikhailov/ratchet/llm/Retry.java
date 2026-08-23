@@ -128,6 +128,28 @@ public record Retry(int attempts, Duration budget, Backoff backoff,
         return new Retry(attempts, budget, backoff, worthRetrying, pause, now);
     }
 
+    /**
+     * THE SAME POLICY, JUDGING FAILURES THE CALLER'S WAY — usually by ADDING to the shipped one.
+     *
+     * <p>{@link Retrying#transportFailures()} retries anything it does not recognise, deliberately:
+     * the cost of retrying something hopeless is one bounded sequence, and the cost of not retrying
+     * something transient is a whole stage. That default is right for failures this library throws
+     * and wrong for a consumer's own — a caller with its own transport has its own ceiling, this
+     * library has never heard of it, and so it gets retried ten times when it means "stop".
+     *
+     * <p>ratchet#8 is the case: an agent runtime this library cannot see, wrapped by
+     * {@link Retrying#around}, with a liveness guard of the consumer's own underneath. Composing is
+     * the answer and it is one line, because the judgement is a plain {@link Predicate}:
+     *
+     * <pre>
+     * Retry mine = Retry.fibonacciSeconds().withWorthRetrying(
+     *         Retrying.transportFailures().and(failure -&gt; !(failure instanceof MyCeiling)));
+     * </pre>
+     */
+    public Retry withWorthRetrying(Predicate<Throwable> worthRetrying) {
+        return new Retry(attempts, budget, backoff, worthRetrying, pause, now);
+    }
+
     /** Swap the schedule — this is where a {@code Retry-After}-aware one goes. */
     public Retry with(Backoff backoff) {
         return new Retry(attempts, budget, backoff, worthRetrying, pause, now);
