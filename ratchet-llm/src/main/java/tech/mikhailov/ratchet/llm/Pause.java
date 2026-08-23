@@ -17,7 +17,7 @@ import java.time.Duration;
  * mistake is not repeated here.
  */
 @FunctionalInterface
-interface Pause {
+public interface Pause {
 
     /** Waits, or returns at once for a zero or negative duration. */
     void of(Duration wait) throws InterruptedException;
@@ -32,5 +32,15 @@ interface Pause {
         if (!wait.isZero() && !wait.isNegative()) {
             Thread.sleep(wait.toMillis());
         }
+    };
+
+    /**
+     * Returns at once, for a consumer's own tests.
+     *
+     * <p>Shipped rather than left to be written again in every consumer, because the version
+     * everyone writes is the one that sleeps "just a little" to feel realistic, and a suite that
+     * sleeps is a suite somebody eventually deletes.
+     */
+    Pause NONE = wait -> {
     };
 }

@@ -25,7 +25,7 @@ import java.util.function.IntSupplier;
  * {@link Retrying}.
  */
 @FunctionalInterface
-interface Backoff {
+public interface Backoff {
 
     /**
      * The wait before the next attempt.
@@ -88,6 +88,16 @@ interface Backoff {
      * @param extraSeconds drawn once per wait; never called for the first attempt, which does not
      *                     wait at all
      */
+    /** The same wait every time. */
+    static Backoff fixed(Duration wait) {
+        return failed -> failed.isEmpty() ? Duration.ZERO : wait;
+    }
+
+    /** No wait at all — for a local endpoint, where a second of politeness buys nothing. */
+    static Backoff immediate() {
+        return failed -> Duration.ZERO;
+    }
+
     static Backoff jitteredBy(Backoff base, IntSupplier extraSeconds) {
         return failed -> {
             if (failed.isEmpty()) {

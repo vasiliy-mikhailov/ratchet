@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.7.0</version>
+  <version>0.8.0</version>
 </dependency>
 ```
 
@@ -74,6 +74,23 @@ and `RATCHET_RETRY_BUDGET_MINUTES` bounds the whole sequence because a count of 
 ten stalls is three and a half hours. `Insisting` re-asks an agent that answered nothing — and sits
 above `Retrying`, so a dead connection is never read as an answer. `Recording` writes every tool
 call into the trace whole and returns it bounded.
+
+### Choosing the retry
+
+`Model.forProducer(trace)` takes the shipped policy. `Model.forProducer(trace, retry)` takes yours:
+
+```java
+Model.forProducer(trace, Retry.none());            // one attempt, as before this existed
+Model.forProducer(trace, Retry.local());           // a flat second, no jitter, for a local endpoint
+Model.forProducer(trace, Retry.times(3));          // the shipped schedule, three attempts
+Model.forProducer(trace, Retry.fromEnv().with(Pause.NONE));   // for your own tests
+```
+
+`Retry` is a record of the four things that decide a retry, and `Backoff` is a function from every
+failure so far to the next wait — which is where a `Retry-After`-aware schedule goes, without this
+library having to grow one. `Pause.NONE` exists so that your suite can exercise retries without
+living through them; the version everyone writes instead sleeps "just a little" to feel realistic,
+and a suite that sleeps is a suite somebody eventually deletes.
 
 ## The shortest working pipeline
 

@@ -77,11 +77,26 @@ public final class Model {
 
     /** Producers and critics share a configuration; what differs is what the chain does with them. */
     public static ChatModel forProducer(Trace trace) {
-        return build(trace, true);
+        return forProducer(trace, Retry.fromEnv());
     }
 
     public static ChatModel forCritic(Trace trace) {
-        return build(trace, true);
+        return forCritic(trace, Retry.fromEnv());
+    }
+
+    /**
+     * The same model, with the retry policy chosen by the caller rather than by the environment.
+     *
+     * <p>For a consumer whose endpoint is not the one these defaults were measured against — a
+     * local process, a test, a deployment that would rather fail fast — and for a consumer that
+     * wants to test its own pipeline without living through a real wait. See {@link Retry}.
+     */
+    public static ChatModel forProducer(Trace trace, Retry retry) {
+        return build(trace, true, retry);
+    }
+
+    public static ChatModel forCritic(Trace trace, Retry retry) {
+        return build(trace, true, retry);
     }
 
     /**
@@ -95,10 +110,14 @@ public final class Model {
      * 340 tokens and 17 seconds.
      */
     public static ChatModel forRetry(Trace trace) {
-        return build(trace, false);
+        return forRetry(trace, Retry.fromEnv());
     }
 
-    private static ChatModel build(Trace trace, boolean thinking) {
+    public static ChatModel forRetry(Trace trace, Retry retry) {
+        return build(trace, false, retry);
+    }
+
+    private static ChatModel build(Trace trace, boolean thinking, Retry retry) {
         String base = setting("BASE", null);
         if (base == null) {
             throw new IllegalStateException(
@@ -143,7 +162,7 @@ public final class Model {
         if (!extra.isEmpty()) {
             s.customParameters(extra);
         }
-        return wrap(s.build(), trace);
+        return wrap(s.build(), trace, retry, System::currentTimeMillis);
     }
 
     /**
@@ -160,8 +179,7 @@ public final class Model {
      * here, where it is still recognisably a drop.
      */
     static ChatModel wrap(dev.langchain4j.model.chat.StreamingChatModel streaming, Trace trace) {
-        return wrap(streaming, trace, Model::jitterSeconds, Pause.SLEEPING,
-                System::currentTimeMillis);
+        return wrap(streaming, trace, Retry.fromEnv(), System::currentTimeMillis);
     }
 
     /**
@@ -173,11 +191,9 @@ public final class Model {
      * change that silently undoes what it is for.
      */
     static ChatModel wrap(dev.langchain4j.model.chat.StreamingChatModel streaming, Trace trace,
-                          java.util.function.IntSupplier jitter, Pause pause,
-                          java.util.function.LongSupplier now) {
-        return new Retrying(new Streamed(streaming, trace), attempts(), budget(),
-                Backoff.jitteredBy(Backoff.fibonacciSeconds(), jitter),
-                pause, Retrying.transportFailures(), now, trace);
+                          Retry retry, java.util.function.LongSupplier now) {
+        return new Retrying(new Streamed(streaming, trace), retry.attempts(), retry.budget(),
+                retry.backoff(), retry.pause(), retry.worthRetrying(), now, trace);
     }
 
     /**
