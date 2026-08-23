@@ -50,7 +50,12 @@ public final class Streamed implements ChatModel {
      * cut and a dead socket is still noticed.
      */
     public static ChatModel over(StreamingChatModel streaming, Trace trace) {
-        return new Streamed(streaming, trace);
+        return new Streamed(streaming, trace, Watch.fromEnv());
+    }
+
+    /** The same, with the two bounds chosen rather than read from the environment at class load. */
+    public static ChatModel over(StreamingChatModel streaming, Trace trace, Watch watch) {
+        return new Streamed(streaming, trace, watch);
     }
 
 
@@ -96,25 +101,19 @@ public final class Streamed implements ChatModel {
         }
     }
 
-    /**
-     * How long a silent connection may stay silent.
-     *
-     * <p>Generous, because the first token can be a long way behind the request on a shared GPU
-     * that is prefilling a large context. It bounds a dead socket, not a slow one.
-     */
-    private static final Duration STALL = Duration.ofMinutes(
-            Integer.parseInt(setting("STALL_MINUTES", "20")));
-
-    /** A hard ceiling that exists only so a wedged lane cannot hold a slot forever. */
-    private static final Duration CEILING = Duration.ofHours(
-            Integer.parseInt(setting("CEILING_HOURS", "3")));
 
     private final StreamingChatModel streaming;
     private final Trace trace;
+    private final Watch watch;
 
     Streamed(StreamingChatModel streaming, Trace trace) {
+        this(streaming, trace, Watch.fromEnv());
+    }
+
+    Streamed(StreamingChatModel streaming, Trace trace, Watch watch) {
         this.streaming = streaming;
         this.trace = trace;
+        this.watch = watch;
     }
 
     @Override
@@ -128,11 +127,22 @@ public final class Streamed implements ChatModel {
         // never block on a consumer that has already given up.
         BlockingQueue<Object> done = new ArrayBlockingQueue<>(1);
         AtomicLong lastToken = new AtomicLong(System.currentTimeMillis());
+        // WHAT THE STREAM HAD SAID BEFORE IT STOPPED. These arrived and were thrown away — the
+        // handler took the text and used it only to stamp a clock. So when a stall or a ceiling
+        // fired, the record showed a throw and nothing else, and the tokens that WERE produced
+        // were the whole diagnosis: a reasoning loop repeating itself, a tool call half-emitted,
+        // a model answering a different question. Truncated argues hardest for keeping them,
+        // because its whole definition is that the answer is blank — the reasoning that spent the
+        // budget is the only thing there is to look at.
+        StringBuilder soFar = new StringBuilder();
 
         streaming.chat(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partial) {
                 lastToken.set(System.currentTimeMillis());
+                synchronized (soFar) {
+                    soFar.append(partial);
+                }
             }
 
             @Override
@@ -153,7 +163,7 @@ public final class Streamed implements ChatModel {
             }
         });
 
-        long deadline = System.currentTimeMillis() + CEILING.toMillis();
+        long deadline = System.currentTimeMillis() + watch.ceiling().toMillis();
         while (true) {
             Object outcome;
             try {
@@ -170,6 +180,7 @@ public final class Streamed implements ChatModel {
                 String said = response.aiMessage() == null ? null : response.aiMessage().text();
                 if ((said == null || said.isBlank())
                         && response.finishReason() == FinishReason.LENGTH) {
+                    keep(soFar, "the budget went on reasoning and the answer came back blank");
                     throw new Truncated("the model reached the token limit before writing an answer"
                             + "; all of it went on reasoning. Raise the completion budget or lower "
                             + "the reasoning one (RATCHET_THINKING_TOKENS), or turn thinking off.");
@@ -181,12 +192,14 @@ public final class Streamed implements ChatModel {
                         : new IllegalStateException("stream failed: " + error.getMessage(), error);
             }
             long quiet = System.currentTimeMillis() - lastToken.get();
-            if (quiet > STALL.toMillis()) {
+            if (quiet > watch.stall().toMillis()) {
+                keep(soFar, "no token for " + (quiet / 60_000) + " minutes");
                 throw new IllegalStateException("no token for " + (quiet / 60_000)
                         + " minutes: the connection is not producing");
             }
             if (System.currentTimeMillis() > deadline) {
-                throw new GaveUp("still streaming after " + CEILING.toHours()
+                keep(soFar, "still streaming after " + watch.ceiling().toHours() + "h");
+                throw new GaveUp("still streaming after " + watch.ceiling().toHours()
                         + "h; giving the lane back");
             }
         }
@@ -205,6 +218,33 @@ public final class Streamed implements ChatModel {
     @Override
     public java.util.Set<dev.langchain4j.model.chat.Capability> supportedCapabilities() {
         return streaming.supportedCapabilities();
+    }
+
+    /**
+     * PUT WHAT IT SAID INTO THE RECORD BEFORE THROWING.
+     *
+     * <p>This class has taken a {@link Trace} since it was written and never written to it — a grep
+     * for {@code trace.} returned nothing at v0.11.1. A consumer noticed while trying to delete
+     * their own copy in favour of this one, and kept theirs because of it: what a stalled
+     * generation had already produced is usually the whole diagnosis, and losing it means the only
+     * evidence of a three-hour lane is that it lasted three hours.
+     *
+     * <p>Recording must not break the call it is recording, which is the rule the rest of this
+     * package keeps — a trace that cannot be written is not a reason to lose the failure underneath.
+     */
+    private void keep(StringBuilder soFar, String why) {
+        if (trace == null) {
+            return;
+        }
+        String said;
+        synchronized (soFar) {
+            said = soFar.toString();
+        }
+        try {
+            trace.thought(why, said, "");
+        } catch (RuntimeException recordingMustNotBreakTheRun) {
+            // Deliberately swallowed. The throw that follows is the news.
+        }
     }
 
     /**

@@ -9,7 +9,7 @@
 #
 #   ./install.sh                      the newest tag, into ~/.m2
 #   ./install.sh v0.5.0               a specific one
-#   ./install.sh v0.11.2 -r ~/.m2-fitness/repository   into a repository another build reads
+#   ./install.sh v0.12.0 -r ~/.m2-fitness/repository   into a repository another build reads
 #
 # `-r` becomes -Dmaven.repo.local, which wants the REPOSITORY directory, not the `.m2` above it.
 # The example in 0.11.1 said `~/.m2-fitness` and would have installed a directory level too high.
@@ -62,7 +62,17 @@ fi
 # WHERE TO PUT IT BACK. A detached HEAD left behind by a failed build is a worse outcome than the
 # failure, because the next person's `git pull` reports something baffling.
 was=$(git symbolic-ref -q --short HEAD || git rev-parse HEAD)
-restore() { git checkout -q "$was" 2>/dev/null || true; }
+# A FAILED RESTORE MUST BE LOUD. This was `git checkout -q "$was" 2>/dev/null || true`, which is
+# the silent-failure shape this repository exists to argue against, sitting in the recovery path
+# where it is least visible: if the checkout back fails for any reason, the reader is left on a
+# detached HEAD with no message, and finds out later when a commit lands somewhere unexpected.
+# That happened here, to the author, on this repository, and cost an amended release commit.
+restore() {
+    if ! git checkout -q "$was" 2>/dev/null; then
+        echo "install.sh: COULD NOT RETURN THIS CHECKOUT TO $was — it is on a detached HEAD." >&2
+        echo "install.sh: run 'git checkout $was' before committing anything." >&2
+    fi
+}
 trap restore EXIT INT TERM
 
 echo "ratchet: installing $version${repo:+ into $repo}"

@@ -32,7 +32,7 @@ convention.
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.11.2</version>
+  <version>0.12.0</version>
 </dependency>
 ```
 
@@ -46,7 +46,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.11.2 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.12.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -102,7 +102,9 @@ listeners, an endpoint you resolve per call — take the parts instead:
 
 ```java
 ChatModel retried = Retrying.on(yourModel, Retry.fibonacciSeconds(), trace);
-ChatModel guarded = Streamed.over(yourStreamingModel, trace);   // the stall guard alone
+ChatModel guarded = Streamed.over(yourStreamingModel, trace);            // the stall guard alone
+ChatModel patient = Streamed.over(yourStreamingModel, trace,
+        Watch.shipped().withStall(Duration.ofMinutes(45)));              // ...with your own bounds
 Predicate<Throwable> worth = Retrying.transportFailures();       // just the judgement
 ```
 
