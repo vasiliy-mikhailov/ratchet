@@ -72,6 +72,17 @@ public final class Reasoning {
     /** One thought row per response, whatever order the end and a detection arrive in. */
     private boolean written;
 
+    /**
+     * WHETHER A GUARD ENDED THIS CALL, which is what decides whether a partial answer is a record
+     * or noise.
+     *
+     * <p>{@link #flush} cannot tell on its own and must not guess. A call that WORKED and did no
+     * thinking has nothing to diagnose, and a row written on its way out would put a guard's
+     * handwriting on every successful response. A call a guard stopped is the opposite case: what
+     * it had already produced is usually the whole diagnosis.
+     */
+    private boolean abandoned;
+
     public Reasoning(Trace trace) {
         this.trace = trace;
     }
@@ -101,6 +112,16 @@ public final class Reasoning {
         }
     }
 
+    /**
+     * A GUARD ENDED THIS CALL, so whatever arrived becomes worth recording.
+     *
+     * <p>Called by the stall, the ceiling and the truncation, and by nothing on the path where the
+     * model simply answered.
+     */
+    public void abandoned() {
+        this.abandoned = true;
+    }
+
     /** More answer. Kept only so the thought row can show what the thinking was for. */
     public void said(String delta) {
         if (delta != null && !detected) {
@@ -128,11 +149,37 @@ public final class Reasoning {
         }
         written = true;
         try {
-            if (thinking.length() == 0 && content.length() == 0 && !finish.isBlank()) {
-                trace.thought(finish, "", "");
-                return;
-            }
-            if (thinking.length() > 0) {
+            // ANYTHING AT ALL IS WORTH A ROW, and the shape this replaces missed the case that
+            // matters most. It wrote off the THINKING buffer — a row when thinking had arrived, and
+            // a bare row when NOTHING had — so a generation that produced CONTENT and no reasoning
+            // recorded nothing whatever. That is the common shape with thinking turned off, which
+            // is what Model.forRetry uses on every re-ask, and what a stall or a ceiling leaves
+            // behind is then the whole diagnosis of a lane that ran for hours.
+            //
+            // It is the same loss ratchet#7 reported against the wrapper this replaced: "what a
+            // stalled generation had already produced is usually the whole diagnosis, and losing it
+            // means the only evidence of a three-hour lane is that it lasted three hours." The
+            // wrapper was deleted and the hole was rebuilt one layer down.
+            // THREE REASONS TO WRITE A ROW, AND A SUCCESSFUL SILENT CALL IS NOT ONE OF THEM.
+            //
+            // Reasoning arrived: the ordinary row, worth keeping whatever happened, because a
+            // judgement whose grounds are not recorded cannot be audited.
+            //
+            // A GUARD STOPPED THE CALL: what it had already said is the diagnosis. This is the case
+            // the previous shape missed entirely — it wrote off the THINKING buffer, so a stall in
+            // a generation with thinking off recorded nothing at all, which is the loss ratchet#7
+            // reported against the wrapper this replaced, rebuilt one layer down. Thinking off is
+            // what Model.forRetry uses on every re-ask, so the call most likely to be running when
+            // a lane wedges was the one that left no evidence.
+            //
+            // Nothing arrived at all but the server said why: only 75 of 182 empties were visible
+            // as `length` before this, and an empty with no row is an empty nobody can diagnose.
+            //
+            // What is deliberately NOT here: a call that answered normally without thinking. It has
+            // nothing to diagnose, and a row on its way out would put a guard's handwriting on
+            // every successful response.
+            if (thinking.length() > 0 || abandoned
+                    || (content.length() == 0 && !finish.isBlank())) {
                 trace.thought(finish, thinking.toString(), content.toString());
             }
         } catch (RuntimeException unrecordable) {

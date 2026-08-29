@@ -48,10 +48,11 @@ class WhatAStalledStreamHadAlreadySaidTest {
         // Thinks twice, starts an answer, then goes quiet for ever. The stall bound is
         // milliseconds here, which is only possible because Watch is a value now — this is the
         // test the constants forbade.
-        // THE FIXTURE THINKS FIRST, AND THAT IS A GAP RATHER THAN A PREFERENCE. The accumulator
-        // writes its row off the THINKING buffer, so a stall in a generation with thinking turned
-        // off still records nothing at all — the very loss ratchet#7 reported, now ratchet's own
-        // rather than the deleted wrapper's. It is not pinned below because it does not hold.
+        // THE FIXTURE THINKS FIRST, AND IT NO LONGER HAS TO. This comment used to concede a gap:
+        // the accumulator wrote its row off the THINKING buffer, so a stall in a generation with
+        // thinking turned off recorded nothing at all — the very loss ratchet#7 reported, rebuilt
+        // one layer down after the wrapper it reported against was deleted. It holds now, and
+        // aStallInAGenerationThatOnlyAnsweredIsStillRecorded is where it is pinned.
         Wire guarded = client(notes, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
 
         // IT STILL COSTS ONE TICK OF WALL CLOCK, and that is not the Watch's doing. The loop notices
@@ -148,6 +149,28 @@ class WhatAStalledStreamHadAlreadySaidTest {
     }
 
     // ---------------------------------------------------------------- the fakes
+
+    @Test
+    @Timeout(60)
+    void aStallInAGenerationThatOnlyAnsweredIsStillRecorded() {
+        // THE HALF THIS FILE USED TO CONCEDE IT COULD NOT PROVE, in the comment three tests above.
+        // The accumulator wrote its row off the THINKING buffer, so a generation that produced
+        // CONTENT and no reasoning recorded nothing whatever when a guard stopped it.
+        //
+        // That is not a corner. Thinking off is what Model.forRetry uses on every re-ask — measured
+        // at 0 of 10 runaway against a 62.5% control — so the call most likely to be running when a
+        // lane wedges was the one call that left no evidence behind.
+        Notes notes = new Notes();
+        Wire guarded = client(notes, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
+
+        assertThrows(IllegalStateException.class,
+                () -> guarded.read(saysThenStalls("a partial answer that was going somewhere")));
+
+        assertEquals(1, notes.thoughts.size(),
+                "a stall with thinking off left no row at all before this: " + notes.thoughts);
+        assertTrue(notes.thoughts.get(0).endsWith(":: a partial answer that was going somewhere"),
+                "and what it had said is in the answer column: " + notes.thoughts.get(0));
+    }
 
     /**
      * A client with no socket under it, so the guards can be handed frames directly.

@@ -326,8 +326,10 @@ public final class Wire implements Chat {
         return d.toMinutes() < 90 ? d.toMinutes() + "m" : d.toHours() + "h";
     }
 
+    /** A guard is ending this call, so whatever the stream had already said becomes the record. */
     private void keep(Reasoning watching, String finish, String why) {
         watching.ended(finish.isBlank() ? why : finish);
+        watching.abandoned();
         watching.flush();
     }
 
