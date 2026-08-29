@@ -117,13 +117,23 @@ class EveryRowInTheCorpusCameThroughHereTest {
     }
 
     /**
-     * A DEFECT FOUND WHILE WRITING THIS AND DELIBERATELY NOT PINNED HERE. The summary line asks the
-     * row for {@code "infra":true}, and every value this class writes is quoted, so the row says
-     * {@code "infra":"true"} and the test never matches. "did not run" is unreachable: to an agent
-     * reading its own record, an outage of ours looks exactly like a check that ran and passed.
-     * The row on disk is right, which is why the corpus can still tell them apart and why the
-     * assertions below are on the row. Asserting the line as it behaves today would make the fix
-     * fail this test, so it is written down instead.
+     * A DEFECT FOUND WHILE WRITING THIS, WRITTEN DOWN RATHER THAN PINNED, AND SINCE FIXED.
+     *
+     * <p>What stood here: the summary line asked the row for {@code "infra":true} while every value
+     * this class writes is quoted, so the row said {@code "infra":"true"} and the test never
+     * matched. "did not run" was unreachable — to an agent reading its own record, an outage of
+     * ours looked exactly like a check that ran and failed. The row on disk was right, which is why
+     * the corpus could still tell them apart and why the assertions below are on the row.
+     *
+     * <p>Refusing to assert the broken behaviour was the correct call and it is worth naming why:
+     * a test written to match the code would have PINNED the defect, and the fix would then have
+     * had to break a passing test to land. That is not hypothetical here — a generated test in
+     * ratchet-llm did exactly that a day later, asserting a stall was reported in minutes because
+     * the code divided by 60,000, and it had to be rewritten before a two-minute bound could stop
+     * announcing itself as zero.
+     *
+     * <p>The summary reads the field now instead of grepping for it, so the line is asserted below
+     * as well. {@code ABuildThatNeverRanIsNotABuildThatFailedTest} is where the fix itself lives.
      */
     @Test
     void aBuildThatCouldNotRunIsNotABuildThatFailed(@TempDir Path dir) {
@@ -145,7 +155,12 @@ class EveryRowInTheCorpusCameThroughHereTest {
         assertEquals("false", checked.get("infra"));
         assertEquals("true", checked.get("passed"), "and a check that ran has a verdict");
 
-        assertEquals("[build gate] ran", trace.happened("", "", 80).lines().toList().get(1),
+        List<String> summary = trace.happened("", "", 80).lines().toList();
+        assertEquals("[build gate] did not run", summary.get(0),
+                "THE HALF THIS TEST USED TO WITHHOLD. A missing toolchain and a failing suite call "
+                        + "for opposite responses — fix the environment, or fix the code — and the "
+                        + "summary is what a person reads to choose: " + summary);
+        assertEquals("[build gate] ran", summary.get(1),
                 "a check that did run says so to the run reading itself back");
     }
 

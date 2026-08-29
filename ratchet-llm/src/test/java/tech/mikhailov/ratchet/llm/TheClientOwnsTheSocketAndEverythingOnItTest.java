@@ -66,31 +66,44 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
     // ------------------------------------------------------------------ what goes out
 
     @Test
-    @Timeout(20)
     void theSilenceIsReportedInAUnitThatSurvivesBeingSmall() {
-        // THIS TEST PINNED THE BUG IT WAS WRITTEN TO CATCH. It asserted the silence was rendered
-        // in MINUTES — `quiet / 60_000` — which is right for the shipped twenty-minute stall and
-        // wrong for every value ratchet#7 made possible: a consumer with a two-minute patience was
-        // told "no token for 0 minutes", which reads as a broken guard rather than a fact about
-        // the connection. A sub-minute bound now reports itself in seconds.
-        Wire wire = new Wire(Endpoint.of("http://test/v1", "m"), Sampling.deterministic(),
-                new Watch(Duration.ofMillis(200), Duration.ofSeconds(30)), true, null);
+        // THIS TEST WAS GREEN ON THE EXACT MESSAGE IT EXISTS TO FORBID, and how it failed is the
+        // point. It asserted the message did NOT contain "0 minutes" or "0m" — the two spellings
+        // the previous bug had produced — and the message was "no token for 0s". A guard written as
+        // a list of the shapes already seen cannot see the next one.
+        //
+        // It asserts what the message SAYS now. Two bounds, either side of a second, because the
+        // hole was a missing branch and one example on each side is what pins a boundary.
+        // THE UNIT, NOT THE NUMBER. The message reports the silence actually MEASURED, which is a
+        // little past the bound by the time the guard notices, so pinning an exact value would pin
+        // the loop's arithmetic instead of the requirement.
+        String small = saidOf(Duration.ofMillis(500));
+        assertTrue(small.endsWith("ms") && !small.startsWith("0"),
+                "Watch asks only that a stall be positive, so a consumer may set one below a "
+                        + "second, and a bound that reports itself as zero is not a report: "
+                        + small);
 
+        String shipped = saidOf(Duration.ofMinutes(20));
+        assertTrue(shipped.endsWith("m") && !shipped.startsWith("0"),
+                "and the shipped twenty minutes still reads as minutes: " + shipped);
+    }
+
+    /**
+     * The rendered bound, read off a real stall rather than off a copy of the formatter.
+     *
+     * <p>Through the guard on purpose: a helper that reimplemented {@code said} would assert this
+     * file's arithmetic rather than {@link Wire}'s, and the two would drift the moment one changed.
+     */
+    private static String saidOf(Duration stall) {
+        Wire wire = new Wire(SOMEWHERE, Sampling.deterministic(),
+                new Watch(stall, stall.plusHours(1)), true, Trace.quiet(),
+                Now.steppingBy(stall.dividedBy(2).plusMillis(1)));
         IllegalStateException stalled = assertThrows(IllegalStateException.class,
-                () -> wire.read(Stream.generate(() -> {
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException stopping) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException(stopping);
-                    }
-                    return "";
-                })));
-
-        assertTrue(!stalled.getMessage().contains("0 minutes")
-                        && !stalled.getMessage().contains("0m"),
-                "a bound that reports itself as zero is not a report: " + stalled.getMessage());
-        assertTrue(stalled.getMessage().contains("not producing"), stalled.getMessage());
+                () -> wire.read(Stream.generate(() -> "")));
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("no token for (\\S+):").matcher(stalled.getMessage());
+        assertTrue(m.find(), "the stall names how long it waited: " + stalled.getMessage());
+        return m.group(1);
     }
 
     @Test

@@ -93,7 +93,7 @@ public final class JsonlTrace implements Trace, ToolWatching {
      *
      * @param provenance JSON fields naming the pipeline, without a leading comma, or null for none
      * @param decisive   lower-case substrings that mark a line as a verdict or a failure
-     * @param disputed   lower-case substrings that mark a line as an objection
+     * @param disputed   substrings that mark a line as an objection; case does not matter
      */
     public JsonlTrace(Path trace, Path settlements, String key, Supplier<String> provenance,
                       List<String> decisive, List<String> disputed) {
@@ -101,8 +101,14 @@ public final class JsonlTrace implements Trace, ToolWatching {
         this.settlements = settlements;
         this.key = key;
         this.provenance = provenance;
-        this.decisive = decisive == null ? List.of() : List.copyOf(decisive);
-        this.disputed = disputed == null ? List.of() : List.copyOf(disputed);
+        // LOWERCASED HERE RATHER THAN ASKED FOR IN A COMMENT. `rank` matches against a lowercased
+        // line, and the parameters were documented as "lower-case substrings" — a requirement a
+        // caller meets by reading the javadoc and violates by copying the phrase out of its own
+        // prompts, where it is written for a model to read. This library's own test fixtures use
+        // `FAIL_`. A phrase in the wrong case does not fail, it silently stops promoting the lines
+        // it names, and the run's summary quietly loses its verdicts to routine file reads.
+        this.decisive = lowered(decisive);
+        this.disputed = lowered(disputed);
     }
 
     /**
@@ -210,6 +216,17 @@ public final class JsonlTrace implements Trace, ToolWatching {
             return '2';
         }
         return '1';
+    }
+
+    private static List<String> lowered(List<String> phrases) {
+        if (phrases == null) {
+            return List.of();
+        }
+        List<String> out = new java.util.ArrayList<>(phrases.size());
+        for (String phrase : phrases) {
+            out.add(phrase.toLowerCase(java.util.Locale.ROOT));
+        }
+        return List.copyOf(out);
     }
 
     private static boolean any(String lowered, List<String> phrases) {

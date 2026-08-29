@@ -368,6 +368,20 @@ public final class Wire implements Chat {
      * connection.
      */
     private static String said(Duration d) {
+        // MILLISECONDS ARE A UNIT TOO, and leaving them out reproduced the bug this method exists
+        // to fix, one step down. `toHours()` made a sub-hour ceiling announce itself as "0h"; this
+        // had no branch below a second, so a sub-second bound announced itself as "0s" — and Watch
+        // asks only that the stall be positive, so any consumer may set one.
+        //
+        // The test written alongside the first fix did not catch it, and how it failed is the
+        // lesson: it asserted the message did NOT contain "0 minutes" or "0m". "0s" contains
+        // neither, so it passed on the exact output it existed to forbid. A guard written as a list
+        // of the shapes already seen cannot see the next one; asserting what the message SAYS
+        // rather than what it avoids can.
+        long millis = d.toMillis();
+        if (millis < 1000) {
+            return millis + "ms";
+        }
         long seconds = d.toSeconds();
         if (seconds < 90) {
             return seconds + "s";
