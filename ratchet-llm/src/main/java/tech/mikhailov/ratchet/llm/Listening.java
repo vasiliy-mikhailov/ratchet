@@ -95,7 +95,7 @@ public final class Listening {
             String tools = reply.calls().stream().map(Called::name).distinct()
                     .reduce((a, b) -> a + "," + b).orElse("");
             trace.exchanged(new Trace.Exchange("back", ask.from(), sent.size(), "",
-                    clip(reply.said(), keeping.answer()), tools, reply.ending().name(),
+                    kept(Keeping.Column.ANSWER, reply.said()), tools, reply.ending().name(),
                     reply.spend().prompt(), reply.spend().completion(), ms, ""));
         } catch (RuntimeException recordingMustNotBreakTheRun) {
             // A LISTENER THAT THROWS TAKES THE CALL WITH IT. Nothing here is worth failing a run
@@ -145,7 +145,7 @@ public final class Listening {
                 if (promptRecorded.add(key)) {
                     out.append("[system: ").append(agent.isBlank() ? "unrecognised" : agent)
                             .append(", ").append(m.text().length()).append(" chars]\n")
-                            .append(clip(m.text(), keeping.prompt())).append("\n\n");
+                            .append(kept(Keeping.Column.PROMPT, m.text())).append("\n\n");
                 } else {
                     out.append("[system: ").append(agent).append("'s prompt, unchanged, ")
                             .append(m.text().length()).append(" chars]\n\n");
@@ -153,7 +153,7 @@ public final class Listening {
                 continue;
             }
             out.append('[').append(role(m)).append("]\n")
-                    .append(clip(said(m), keeping.turn())).append("\n\n");
+                    .append(kept(column(m), said(m))).append("\n\n");
         }
         return out.toString().strip();
     }
@@ -202,9 +202,31 @@ public final class Listening {
      * into an unreadable ribbon in the one view whose job is showing what was said. The JSON writer
      * escapes them; the page renders them.
      */
-    private static String clip(String text, int limit) {
+    private String kept(Keeping.Column column, String text) {
         String s = text == null ? "" : text.strip();
-        return s.length() <= limit ? s
-                : s.substring(0, limit) + "\n... (truncated, total " + s.length() + " chars)";
+        int room = keeping.room(column, s);
+        if (room < 0) {
+            // Reported rather than clamped. A policy that answers a negative is broken and its
+            // author needs to know; the catch around every call site turns this into a progress
+            // note, so the run survives and the record says which column asked.
+            throw new IllegalArgumentException(
+                    "a keeping policy answered " + room + " for the " + column + " column");
+        }
+        return s.length() <= room ? s
+                : s.substring(0, room) + "\n... (truncated, total " + s.length() + " chars)";
+    }
+
+    /**
+     * WHICH COLUMN A MESSAGE IS, which is finer than the render/prompt split because a tool result
+     * and an instruction land in the same place and are not the same kind of thing. One consumer's
+     * tools span three orders of magnitude and only they know which is which.
+     */
+    private static Keeping.Column column(Said m) {
+        return switch (m.role()) {
+            case USER -> Keeping.Column.USER;
+            case ASSISTANT -> Keeping.Column.ASSISTANT;
+            case TOOL -> Keeping.Column.TOOL_RESULT;
+            case SYSTEM -> Keeping.Column.PROMPT;
+        };
     }
 }

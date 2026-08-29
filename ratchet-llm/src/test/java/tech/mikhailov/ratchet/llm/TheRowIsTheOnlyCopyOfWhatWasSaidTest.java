@@ -186,7 +186,7 @@ class TheRowIsTheOnlyCopyOfWhatWasSaidTest {
     @Test
     void theRenderOfEachTurnIsBoundedBecauseEveryLaterCallWritesItAgain() {
         Written record = Written.kept();
-        Listening listening = new Listening(record, Keeping.shipped().withTurn(50));
+        Listening listening = new Listening(record, Keeping.shipped().butFor(Keeping.Column.USER, 50));
 
         listening.sending(Ask.of(List.of(Said.user("y".repeat(200)))));
 
@@ -199,7 +199,7 @@ class TheRowIsTheOnlyCopyOfWhatWasSaidTest {
     @Test
     void aTurnExactlyAtItsBoundIsWholeAndDoesNotClaimToHaveBeenCut() {
         Written record = Written.kept();
-        Listening listening = new Listening(record, Keeping.shipped().withTurn(50));
+        Listening listening = new Listening(record, Keeping.shipped().butFor(Keeping.Column.USER, 50));
 
         listening.sending(Ask.of(List.of(Said.user("x".repeat(50)))));
 
@@ -253,7 +253,7 @@ class TheRowIsTheOnlyCopyOfWhatWasSaidTest {
     @Test
     void whateverIsCutSaysHowMuchThereWasSoTheColumnIsNotCensored() {
         Written record = Written.kept();
-        Listening listening = new Listening(record, Keeping.shipped().withAnswer(10));
+        Listening listening = new Listening(record, Keeping.shipped().butFor(Keeping.Column.ANSWER, 10));
 
         listening.back(ask(), reply("z".repeat(14_203)), 1);
 
@@ -266,8 +266,9 @@ class TheRowIsTheOnlyCopyOfWhatWasSaidTest {
     @Test
     void raisingWhatTheAnswerKeepsDoesNotRaiseWhatTheRenderKeeps() {
         Written record = Written.kept();
-        Keeping tight = Keeping.shipped().withTurn(50).withAnswer(50);
-        Listening listening = new Listening(record, tight.withAnswer(9_000));
+        Keeping tight = Keeping.shipped()
+                .butFor(Keeping.Column.USER, 50).butFor(Keeping.Column.ANSWER, 50);
+        Listening listening = new Listening(record, tight.butFor(Keeping.Column.ANSWER, 9_000));
 
         listening.sending(Ask.of(List.of(Said.user("y".repeat(200)))));
         listening.back(ask(), reply("z".repeat(200)), 1);

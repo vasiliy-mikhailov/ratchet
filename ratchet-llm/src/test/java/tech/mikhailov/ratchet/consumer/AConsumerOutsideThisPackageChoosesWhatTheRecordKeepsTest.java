@@ -75,7 +75,7 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
         Kept record = new Kept();
 
         answered(record, endpoint -> Wire.to(endpoint, Sampling.deterministic(), Watch.shipped(),
-                false, record, Keeping.shipped().withAnswer(64)));
+                false, record, Keeping.shipped().butFor(Keeping.Column.ANSWER, 64)));
 
         assertEquals("z".repeat(64) + "\n... (truncated, total 5000 chars)", record.answers.get(0),
                 "cut where the consumer said, and saying how much there was rather than only that "
@@ -92,7 +92,7 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
         Kept record = new Kept();
 
         answered(record, endpoint -> Model.forProducer(record, endpoint, Retry.none(),
-                Sampling.deterministic(), Watch.shipped(), Keeping.shipped().withAnswer(1_234)));
+                Sampling.deterministic(), Watch.shipped(), Keeping.shipped().butFor(Keeping.Column.ANSWER, 1_234)));
 
         assertEquals("z".repeat(1_234) + "\n... (truncated, total 5000 chars)",
                 record.answers.get(0),
@@ -103,8 +103,12 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
     @Test
     void theRenderKeepsLessThanTheBriefAndTheAnswerBecauseItAloneIsPaidAgain() {
         Keeping shipped = Keeping.shipped();
+        String any = "some text";
 
-        assertTrue(shipped.turn() < shipped.prompt() && shipped.turn() < shipped.answer(),
+        assertTrue(shipped.room(Keeping.Column.TOOL_RESULT, any)
+                        < shipped.room(Keeping.Column.PROMPT, any)
+                && shipped.room(Keeping.Column.USER, any)
+                        < shipped.room(Keeping.Column.ANSWER, any),
                 "the render is re-emitted on every later call of the same conversation and the "
                         + "other two are written once, so a shipped bound that treated them alike "
                         + "would be wrong about one of them whichever number it chose");
@@ -113,17 +117,58 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
     @Test
     void aBoundOfZeroIsRefusedBecauseAnAlwaysEmptyColumnIsNotASmallerRecord() {
         assertTrue(assertThrows(IllegalArgumentException.class,
-                () -> Keeping.shipped().withTurn(0)).getMessage().contains("turn"),
-                "and it says which column, because three bounds means three ways to be wrong");
-        assertThrows(IllegalArgumentException.class, () -> Keeping.shipped().withAnswer(-1));
-        assertThrows(IllegalArgumentException.class, () -> Keeping.shipped().withPrompt(0));
+                () -> Keeping.of(1, 0, 1)).getMessage().contains("turn"),
+                "and it says which column, because three numbers means three ways to be wrong");
+        assertThrows(IllegalArgumentException.class, () -> Keeping.of(0, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> Keeping.of(1, 1, -1));
+        assertThrows(IllegalArgumentException.class,
+                () -> Keeping.shipped().butFor(Keeping.Column.ANSWER, 0));
     }
 
     @Test
     void aDeploymentThatSetsNothingGetsTheShippedBounds() {
-        assertEquals(Keeping.shipped(), Keeping.fromEnv(),
-                "no launcher in this repository names these three variables, so the environment "
-                        + "door must land on the shipped numbers rather than on a parser's own");
+        String any = "some text";
+        for (Keeping.Column column : Keeping.Column.values()) {
+            assertEquals(Keeping.shipped().room(column, any), Keeping.fromEnv().room(column, any),
+                    "no launcher in this repository names these three variables, so the "
+                            + "environment door must land on the shipped policy rather than on a "
+                            + "parser's own fallback: " + column);
+        }
+    }
+
+
+    /**
+     * THE DIFFERENCE BETWEEN A POLICY AND A SETTINGS BAG, AND THE REASON THIS IS A FUNCTION.
+     *
+     * <p>The first version of this seam was three numbers with {@code with} methods. That still had
+     * ratchet choosing and a consumer arguing, and the number a consumer had actually reported was
+     * still the number ratchet shipped. No fixed number is right for a column whose payloads span
+     * three orders of magnitude — one consumer's {@code edit_file} returns at most 214 characters
+     * and one {@code grep} returned 3.69 MB — and only the caller knows which of their tools is
+     * which.
+     *
+     * <p>So the bound sees the text. The rule below is a consumer's own and could not be expressed
+     * as a setting at any value: keep a compilation failure whole, because that is the thing they
+     * open the record for, and hold everything else to a glance.
+     */
+    @Test
+    void aConsumerDecidesPerMessageAndNotOnlyPerColumn() throws IOException {
+        String failure = "error: cannot find symbol setStatus(int) on SampleResponse";
+        String noise = "the build is green and there is nothing here worth keeping";
+        Keeping theirs = (column, text) -> text.contains("cannot find symbol") ? text.length() : 16;
+        Kept whenItFailed = new Kept();
+        Kept whenItDidNot = new Kept();
+
+        answered(whenItFailed, failure, endpoint -> Wire.to(endpoint, Sampling.deterministic(),
+                Watch.shipped(), false, whenItFailed, theirs));
+        answered(whenItDidNot, noise, endpoint -> Wire.to(endpoint, Sampling.deterministic(),
+                Watch.shipped(), false, whenItDidNot, theirs));
+
+        assertEquals(failure, whenItFailed.answers.get(0),
+                "their rule kept it whole, and no number in this library decided that");
+        assertEquals(noise.substring(0, 16) + "\n... (truncated, total " + noise.length()
+                        + " chars)", whenItDidNot.answers.get(0),
+                "and the same policy held the other one to a glance, in the same run");
     }
 
     /**
@@ -132,10 +177,15 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
      * the client on the way past, so what this asserts is what a corpus would hold.
      */
     private static void answered(Kept record, Function<Endpoint, Chat> theirs) throws IOException {
+        answered(record, ANSWER, theirs);
+    }
+
+    private static void answered(Kept record, String says, Function<Endpoint, Chat> theirs)
+            throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
             exchange.getRequestBody().readAllBytes();
-            byte[] frame = ("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + ANSWER
+            byte[] frame = ("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"" + says
                     + "\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
@@ -148,7 +198,7 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
         try {
             Chat built = theirs.apply(
                     Endpoint.of("http://127.0.0.1:" + server.getAddress().getPort() + "/v1", "m"));
-            assertEquals(ANSWER, built.answer(
+            assertEquals(says, built.answer(
                     Ask.of(List.of(Said.user("go")))).said(), "the loopback stood in for a server");
         } finally {
             server.stop(0);
