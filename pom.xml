@@ -169,6 +169,17 @@
       <build>
         <plugins>
           <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <!-- A TEST CLASS THAT RUNS NOTHING IS A BROKEN FILE, NOT A PASSING ONE. Twice in one
+                   session an edit removed a class body and left the file compiling: surefire then
+                   reported "Tests run: 0, Failures: 0" and the build was green. Zero is the one
+                   count that must never read as success. -->
+              <failIfNoTests>true</failIfNoTests>
+            </configuration>
+          </plugin>
+          <plugin>
             <groupId>org.pitest</groupId>
             <artifactId>pitest-maven</artifactId>
             <version>1.20.4</version>
@@ -197,7 +208,12 @@
                 <param>XML</param>
               </outputFormats>
               <timestampedReports>false</timestampedReports>
-              <threads>16</threads>
+              <!-- HALF THE CORES, NOT TWO THIRDS, AND THE REASON IS OPERATIONAL. At sixteen this
+                   drove a 24-core host to a load average of 204: sshd could not complete a banner
+                   exchange and Caddy stopped answering, so the box looked dead from outside and the
+                   sites it fronts went with it. A diagnostic that takes production down while it
+                   measures is not one you can run when you need it. -->
+              <threads>8</threads>
               <timeoutConstant>10000</timeoutConstant>
               <verbose>false</verbose>
             </configuration>

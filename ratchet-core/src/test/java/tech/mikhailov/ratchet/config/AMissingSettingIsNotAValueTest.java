@@ -93,6 +93,71 @@ class AMissingSettingIsNotAValueTest {
                         + "other branch and would still pass, which is worse than failing");
     }
 
+    @Test
+    void aNameThisProcessDoesNotHaveReadsAsNothingRatherThanAsEmpty() {
+        assertNull(Env.get(NOBODY_HAS_EVER_SET_THIS),
+                "an empty string here is a value, and a value beats every fallback downstream: it "
+                        + "is how an unconfigured deployment ends up posting to a base URL of \"\"");
+    }
+
+    @Test
+    void aVariableThisProcessActuallyHasComesBackExactlyAsTheProcessHasIt() {
+        Map.Entry<String, String> real = aVariableThisProcessHasThatSaysNeitherYesNorNo();
+
+        assertEquals(real.getValue(), Env.get(real.getKey()),
+                "byte for byte. A value this library trimmed, lower-cased or otherwise improved on "
+                        + "the way through is a different model name, a different path, a different "
+                        + "token — and the consumer is looking at the variable it set, not at us");
+    }
+
+    @Test
+    void anUnsetNameFallsBackToWhatTheCallerChoseAndNotToWhatTheLibraryPrefers() {
+        assertEquals("qwen3-8b", Env.get(NOBODY_HAS_EVER_SET_THIS, "qwen3-8b"),
+                "the fallback is the caller's, and comes back as the caller wrote it");
+    }
+
+    @Test
+    void aVariableThatIsSetBeatsTheFallback() {
+        Map.Entry<String, String> real = aVariableThisProcessHasThatSaysNeitherYesNorNo();
+
+        assertEquals(real.getValue(), Env.get(real.getKey(), "a-default-that-must-not-win"),
+                "the whole point of reading the environment: a deployment that set the variable "
+                        + "gets what it set. A fallback that wins anyway is a setting nobody has");
+    }
+
+    @Test
+    void anUnsetFlagIsTheCallersDefaultInBothDirections() {
+        // Both directions, deliberately. Asserted one way round, a flag hardwired to that answer
+        // passes: RATCHET_THINKING defaults to true, so a `return true` here reads as correct right
+        // up until the deployment that turns thinking off, which is the deployment paying for it.
+        assertTrue(Env.flag(NOBODY_HAS_EVER_SET_THIS, true),
+                "unset means the caller's default, and the caller's default here is on");
+        assertFalse(Env.flag(NOBODY_HAS_EVER_SET_THIS, false),
+                "and unset means the caller's default when that default is off, too");
+    }
+
+    @Test
+    void aValueThatMeansNeitherYesNorNoLeavesTheDecisionWithTheCaller() {
+        // The one row of flag's truth table a test can reach without choosing a value, and the row
+        // the rest of the library leans on hardest. Model.build chains its three names by using
+        // each flag() as the next one's fallback, so THIS line is what decides what happens when a
+        // deployment sets RATCHET_THINKING to " true " — a quoted compose entry with a trailing
+        // space — or to anything else flag does not know: the answer is not "true" and it is not
+        // "false", it is "ask the older OC_/BJV_ name", and that silent handover is only correct
+        // if an unrecognised value is treated as no answer at all. Eight mutants live here, and
+        // they need both directions: with one assertion a flag that read every set value as true
+        // (or as false) still passes.
+        Map.Entry<String, String> real = aVariableThisProcessHasThatSaysNeitherYesNorNo();
+
+        assertTrue(Env.flag(real.getKey(), true),
+                "a set variable saying something flag does not recognise (" + real.getKey()
+                        + ") must not be read as an answer: it must leave the caller's default "
+                        + "standing, and here that default is on");
+        assertFalse(Env.flag(real.getKey(), false),
+                "and standing the other way round too — a value that means nothing to flag cannot "
+                        + "be what turns a setting on");
+    }
+
 
 
 
