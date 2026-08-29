@@ -99,7 +99,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
                 new Watch(stall, stall.plusHours(1)), true, Trace.quiet(),
                 Now.steppingBy(stall.dividedBy(2).plusMillis(1)));
         IllegalStateException stalled = assertThrows(IllegalStateException.class,
-                () -> wire.read(Stream.generate(() -> "")));
+                () -> wire.read(Stream.generate(() -> "").limit(1_000_000)));
         java.util.regex.Matcher m =
                 java.util.regex.Pattern.compile("no token for (\\S+):").matcher(stalled.getMessage());
         assertTrue(m.find(), "the stall names how long it waited: " + stalled.getMessage());
@@ -370,11 +370,11 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
             frames.add("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\""
                     + finish + "\"}]}");
         }
-        return Stream.concat(frames.stream(), Stream.generate(NOTHING));
+        return Stream.concat(frames.stream(), Stream.generate(NOTHING).limit(1_000_000));
     }
 
     private static Stream<String> saysNothingEver() {
-        return Stream.generate(NOTHING);
+        return Stream.generate(NOTHING).limit(1_000_000);
     }
 
     /** Silent, but it says when the reading has started, so the interrupt lands on a real wait. */
@@ -382,7 +382,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
         return Stream.generate(() -> {
             begun.countDown();
             return NOTHING.get();
-        });
+        }).limit(1_000_000);
     }
 
     /** Counted down by nothing, which is the point. */

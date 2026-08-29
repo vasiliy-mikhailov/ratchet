@@ -42,6 +42,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class TheCeilingEndsALaneThatIsStillProducingTest {
 
+    /**
+     * BOUNDED, AND THE BOUND IS ABOUT THE READER RATHER THAN THE TEST.
+     *
+     * <p>{@link Wire} drains the body on its own thread with {@code forEach}, and closes the body on
+     * the way out. A real {@code BodyHandlers.ofLines()} stream throws into that thread when it is
+     * closed, so production stops. {@code Stream.generate} has no close handler and does not: the
+     * reader kept producing into an unbounded queue for the life of the JVM.
+     *
+     * <p>Measured on the shipped Watch: the ceiling fired after 223,899 frames, and in the 300ms
+     * AFTER read() returned the reader produced 5,346,755 more and took the heap to 140 MB — 252 MB
+     * at 1.3s and still climbing. Every test that ran afterwards competed with it, and it is the
+     * likeliest reason sixteen of Wire's mutants came back MEMORY_ERROR: unscoreable rather than
+     * equivalent, including the one that removes the ceiling outright.
+     *
+     * <p>The limit is far beyond any guard under test, so the guard still fires first and the test
+     * still means what it says — it just cannot run away.
+     */
+    private static final long FRAMES = 1_000_000;
+
     /** What ships: twenty minutes of silence allowed, three hours of anything at all. */
     private static final Watch SHIPPED = Watch.shipped();
 
@@ -111,7 +130,7 @@ class TheCeilingEndsALaneThatIsStillProducingTest {
     /** Tokens for ever: never silent, so only a ceiling can end it. */
     private static Stream<String> tokensForever() {
         return Stream.generate(() -> "data: {\"choices\":[{\"index\":0,"
-                + "\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}");
+                + "\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}").limit(FRAMES);
     }
 
     /**
@@ -121,7 +140,7 @@ class TheCeilingEndsALaneThatIsStillProducingTest {
      * mark, which is what makes it silence to the guard and traffic to the socket.
      */
     private static Stream<String> keepAlivesForever() {
-        return Stream.generate(() -> "");
+        return Stream.generate(() -> "").limit(FRAMES);
     }
 
     /** One short, ordinary, successful response. */

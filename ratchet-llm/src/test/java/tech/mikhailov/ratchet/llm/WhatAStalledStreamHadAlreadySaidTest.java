@@ -227,7 +227,7 @@ class WhatAStalledStreamHadAlreadySaidTest {
         // test — and it modelled a socket that has died rather than one that has gone quiet. A
         // blank line is the frame separator: the loop skips it without touching the last-token
         // mark, so it is silence to the guard and traffic to the socket, and nothing has to wait.
-        return Stream.concat(frames.stream(), Stream.generate(() -> ""));
+        return Stream.concat(frames.stream(), Stream.generate(() -> "").limit(1_000_000));
     }
 
     /**

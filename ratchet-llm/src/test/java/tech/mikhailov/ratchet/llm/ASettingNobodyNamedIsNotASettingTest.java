@@ -62,14 +62,37 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * the number moved and the risk did not.
  *
  * <p>COUNTED RATHER THAN CLAIMED: each change was applied to a scratch copy of {@link Model},
- * compiled, and this file run against it. With nothing named, all twelve survive it. With
- * {@code RATCHET_BASE} and {@code RATCHET_MODEL} named — which is every deployment that has ever
- * asked this library anything — {@code forProducer(trace)} returning null fails the first assertion
- * below, and so do its five neighbours. The five name-chain mutants survive in BOTH environments,
- * including the one that matters most: a JVM launched under {@code OC_BASE} and {@code OC_MODEL},
- * against a {@link Model} that never consults {@code OC_}, resolves no endpoint at all in the field
- * and leaves this file green, because the difference is only visible to an assertion about a value
- * the test chose.
+ * compiled, and this file run against it in four environments — nothing named, and an endpoint
+ * named under each of the three prefixes in turn:
+ *
+ * <pre>
+ *                            nothing  RATCHET_   OC_     BJV_
+ * a door hands back null      alive    KILLED   KILLED  KILLED
+ * OC_ is never consulted      alive    alive    KILLED  alive
+ * OC_ overwrites RATCHET_     alive    KILLED   alive   alive
+ * BJV_ is never consulted     alive    alive    alive   KILLED
+ * BJV_ overwrites both        alive    KILLED   KILLED  alive
+ * the fallback always wins    alive    KILLED   KILLED  KILLED
+ * the THINKING chain ignored  alive    alive    alive   alive
+ * </pre>
+ *
+ * <p>The first column is the one PIT reads, so the honest number this file adds to the report is
+ * ZERO. What the other three say is that eleven of the twelve die to this file the moment a
+ * launcher names an endpoint — the environment is the only thing between them and dead, which is
+ * why the missing seam below is a seam and not an excuse. The twelfth wants more than a variable:
+ * the thinking flag is only visible in the request body, so killing it needs a {@code *_THINKING}
+ * set to a falsehood AND a socket to read the body off.
+ *
+ * <p>THE FIRST DRAFT OF THIS FILE WAS ALIVE IN EVERY COLUMN, AND THAT WAS THE FILE'S OWN FAULT. It
+ * read what to expect out of {@code Model.setting("BASE", null)} — the function under test — so a
+ * {@link Model} that had stopped consulting {@code OC_} was asked what should happen, answered
+ * "this deployment named nothing", and the assertion that followed was the one the mutant
+ * satisfies. Measured: a JVM launched under {@code OC_BASE} and {@code OC_MODEL} against that
+ * {@link Model} resolves NO ENDPOINT AT ALL — every lane of that deployment fails at the door —
+ * and the first draft stayed green through it, in all four columns. A test that asks the mutated
+ * function what to expect follows it wherever it goes. So the environment is read here through
+ * {@code System.getenv} and the precedence rule is written out again below, because an oracle that
+ * shares a line with the thing it is judging is not an oracle.
  *
  * <p>A SECOND SHARED RULE IS STILL SHARED, and it is the one {@code numberFrom}'s rewrite left
  * behind. Taking the fallback as an argument fixed six settings sharing ATTEMPTS's default; the
@@ -110,12 +133,35 @@ class ASettingNobodyNamedIsNotASettingTest {
         doors.put("forRetry(trace)", () -> Model.forRetry(QUIET));
         doors.put("forRetry(trace, retry)", () -> Model.forRetry(QUIET, Retry.none()));
 
-        String base = Model.setting("BASE", null);
-        String model = Model.setting("MODEL", null);
+        String base = whatThisLauncherNamed("BASE");
+        String model = whatThisLauncherNamed("MODEL");
+
+        // THE SAME QUESTION THE DOORS ARE ABOUT TO ASK, ASKED OF THE VALUE FIRST, so a failure
+        // says WHICH of the three names stopped being read rather than only that a door threw.
+        // Not RATCHET_KEY: assertEquals prints both sides, and this library's one rule about the
+        // key is that it is never printed — Endpoint.toString exists for that reason alone.
+        assertEquals(base, Model.setting("BASE", null),
+                "the endpoint this launcher named under RATCHET_/OC_/BJV_BASE, in that order, is "
+                        + "the one this library must resolve; a chain that reads a different set "
+                        + "of names than it promises leaves the deployment that used the other "
+                        + "one with no endpoint at all and no sentence saying why");
+        assertEquals(model, Model.setting("MODEL", null),
+                "and the same three names for the model, because a launcher that cannot be edited "
+                        + "while the sweep it started is running sets both or neither");
 
         doors.forEach((door, open) -> {
             if (base != null && model != null) {
-                assertNotNull(open.get(),
+                Chat opened;
+                try {
+                    opened = open.get();
+                } catch (IllegalStateException nowhereToAsk) {
+                    throw new AssertionError(door + " refused to open although this launcher named "
+                            + "an endpoint (" + base + ", " + model + "). The door said \""
+                            + nowhereToAsk.getMessage() + "\", so one of the three names this "
+                            + "library promises to go on honouring is no longer read, and every "
+                            + "lane started by that launcher fails at the door", nowhereToAsk);
+                }
+                assertNotNull(opened,
                         "this JVM's launcher named an endpoint, so " + door + " must hand back a "
                                 + "model built from it; a door that hands back null is a "
                                 + "NullPointerException raised inside a library the consumer "
@@ -183,6 +229,27 @@ class ASettingNobodyNamedIsNotASettingTest {
     }
 
     // ---------------------------------------------------------------- the premises, checked
+
+    /**
+     * THE PROMISE, WRITTEN OUT HERE RATHER THAN ASKED OF THE THING BEING JUDGED: the first of
+     * {@code RATCHET_}, {@code OC_} and {@code BJV_} that this launcher named non-blank, and null
+     * when it named none of them.
+     *
+     * <p>Nine lines that could have been one call to {@code Model.setting}, and that one call is
+     * what made the first draft of this file unable to fail. The three names and their order are
+     * the whole of the compatibility promise {@code setting()}'s javadoc makes to a sweep whose
+     * launcher cannot be edited while it is running; a copy of it that is derived from the code
+     * cannot notice the code changing it.
+     */
+    private static String whatThisLauncherNamed(String name) {
+        for (String prefix : THE_THREE_PREFIXES) {
+            String said = System.getenv(prefix + name);
+            if (said != null && !said.isBlank()) {
+                return said;
+            }
+        }
+        return null;
+    }
 
     /** Nothing anywhere has named the test's own name, or half this file measures another branch. */
     private static void nobodyHasNamedIt() {

@@ -265,7 +265,7 @@ class AConsumerBringsItsOwnModelTest {
      * minutes. Nothing waits now.
      */
     private static Stream<String> saysNothingEver() {
-        return Stream.generate(() -> "");
+        return Stream.generate(() -> "").limit(1_000_000);
     }
 
     /**

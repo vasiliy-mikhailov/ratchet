@@ -204,17 +204,40 @@ class ACycleIsSixRepeatsOfALineTheDetectorCanSeeTest {
 
     @Test
     void theGenerationIsStillEndedWhenNothingIsRecording() {
-        // THE ABORT IS FOR THE BILL, NOT FOR THE ROW. Wire hands Reasoning whatever trace it was
-        // built with, and that is nullable today — Trace.quiet() is the value meant to replace it,
-        // and Reasoning's own null check is one of the three this library still carries. A
-        // detector that only fires when somebody is watching pays the full runaway on every
-        // untraced call, and greedy decoding does not leave a cycle it has entered.
-        Reasoning.LoopDetected caught = assertThrows(Reasoning.LoopDetected.class,
+        // THE ABORT IS FOR THE BILL, NOT FOR THE ROW. A detector that only fires when somebody is
+        // watching pays the full runaway on every untraced call, and greedy decoding does not
+        // leave a cycle it has entered.
+        //
+        // BOTH DOORS, because they are not the same door. A consumer that wants no record hands
+        // Wire a null trace, but Wire coerces that to Trace.quiet() in its own constructor and
+        // passes the coerced field down, so the null NEVER REACHES Reasoning through the
+        // transport — what the first half of this test drives is a quiet trace, not a missing one.
+        // Reasoning is public with a public constructor, so its next caller reaches the second
+        // door directly, and that is the one where the null actually arrives.
+        Reasoning.LoopDetected throughTheWire = assertThrows(Reasoning.LoopDetected.class,
                 () -> client(null).read(reasoning(lines(TRAPPED, 12))),
                 "the cycle is ended whether or not there is anywhere to write it down");
 
-        assertTrue(caught.getMessage().contains(TRAPPED),
-                "and it still says which line trapped it: " + caught.getMessage());
+        assertTrue(throughTheWire.getMessage().contains(TRAPPED),
+                "and it still says which line trapped it: " + throughTheWire.getMessage());
+
+        Reasoning unwatched = new Reasoning(null);
+        Reasoning.LoopDetected untraced = assertThrows(Reasoning.LoopDetected.class,
+                () -> {
+                    for (int repeat = 0; repeat < 12; repeat++) {
+                        unwatched.reasoned(TRAPPED + "\n");
+                    }
+                },
+                "and a Reasoning built with no trace at all still ends the cycle: the guard is not "
+                        + "a side effect of recording it");
+
+        assertTrue(untraced.getMessage().contains("6 times"),
+                "at the same sixth repeat, so nothing about the count depends on a listener: "
+                        + untraced.getMessage());
+        // The row goes nowhere and that must not be an exception out of a live generation either:
+        // a trace that cannot be written must never be why a run fails.
+        unwatched.ended("stop");
+        unwatched.flush();
     }
 
     // ---------------------------------------------------------------- the fakes
@@ -222,8 +245,10 @@ class ACycleIsSixRepeatsOfALineTheDetectorCanSeeTest {
     /**
      * A client with no socket under it, so frames can be handed straight to {@link Wire#read}.
      *
-     * <p>A null trace is the shape a consumer that wants no record leaves behind, and it reaches
-     * {@link Reasoning} unchanged.
+     * <p>A null trace is the shape a consumer that wants no record leaves behind. It does NOT reach
+     * {@link Reasoning} as a null: {@link Wire} coerces it to {@link Trace#quiet()} in its own
+     * constructor and hands the coerced field down, which is why the test that cares about a
+     * missing trace builds a {@link Reasoning} itself as well.
      */
     private static Wire client(Trace trace) {
         return new Wire(Endpoint.of("http://localhost:1", "a-model"), Sampling.deterministic(),

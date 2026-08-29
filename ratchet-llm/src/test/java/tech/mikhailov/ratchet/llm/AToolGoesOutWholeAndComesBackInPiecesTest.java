@@ -21,23 +21,28 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *
  * <p>THE MUTATION REPORT NAMED THE HOLE TWICE, AND THE SECOND WAY IS THE ONE WORTH READING.
  * Fifteen of Wire's fifty-four live mutants are in the four methods a tool passes through
- * ({@code body}, its tools lambda, {@code collect}, {@code entries}), and the lambda that writes one
- * tool onto the wire came back NO_COVERAGE: no test in this module has ever called {@code body}
+ * ({@code body}, its tools lambda, {@code collect}, {@code entries}), and the lambda that writes
+ * one tool onto the wire came back NO_COVERAGE: no test in this module had ever called {@code body}
  * with a tool in the {@link Ask}, so what a tool looks like to the server was decided by reading
- * the code. On the way back, {@code grep -rn "calls().get"} over this module's tests returns ONE
- * line, asserting a name, and an id read off the wire is asserted nowhere at all — which is why
+ * the code. On the way back, before this file, {@code grep -rn "calls().get"} over this module's
+ * tests returned ONE line — {@code AnEmptyAnswerThatRanOutOfRoomTest}, asserting a name — and no
+ * test anywhere asserted an id READ OFF THE WIRE, only ids it had constructed itself, which is why
  * both halves of {@code if (!id.isBlank())} survive being deleted. {@link Called}'s javadoc says
  * what that costs: "a conversation that answers a call with the wrong id is a conversation the
  * model cannot follow."
  *
- * <p>THE FIXTURE ALREADY EXISTED AND NOTHING CALLED IT. {@code TheClientOwnsTheSocketAndEverything
- * OnItTest} carries {@code twoCallsInOneTurn()} — the shape captured from the production endpoint,
- * with a paragraph of javadoc explaining why the flat read files the second call's arguments
- * against the first — and {@code grep -n twoCallsInOneTurn} over the whole test tree returns its
- * declaration and no call site. {@code breaksAfterSaying} is orphaned the same way. A fixture with
- * no caller is a requirement nobody checks, and it fails silently: the build stays green, the
- * javadoc still reads as coverage, and the mutants underneath it are the only thing that says
- * otherwise. The frames below are that shape, and this file calls them.
+ * <p>THE FIXTURE ALREADY EXISTED AND NOTHING CALLED IT, AND THAT IS REPORTED AS A DEFECT RATHER
+ * THAN FIXED HERE. {@code TheClientOwnsTheSocketAndEverythingOnItTest} declares
+ * {@code twoCallsInOneTurn()} — the shape captured from the production endpoint, with a paragraph
+ * of javadoc explaining why the flat read files the second call's arguments against the first —
+ * and no line in that class or any other calls it. Four more of its helpers are orphaned the same
+ * way ({@code breaksAfterSaying}, {@code sayingSomethingEverySecond}, {@code Loopback.answering},
+ * {@code Loopback.refusing}), and its javadoc lists seven requirements and says "every test below
+ * is one of those lines" above six tests. A fixture with no caller is a requirement nobody checks,
+ * and it fails silently: the build stays green, the javadoc still reads as coverage, and the
+ * mutants underneath it are the only thing that says otherwise. The frames below are that shape,
+ * copied rather than reached across — the orphan there is evidence and should stay legible as
+ * evidence, not be quietly given a caller from another file.
  *
  * <p>WHY THE ARGUMENTS ARE THE HARD PART. They are a JSON document the model composed, sent as a
  * JSON string inside another JSON document, split at arbitrary points — including the middle of a
@@ -147,6 +152,11 @@ class AToolGoesOutWholeAndComesBackInPiecesTest {
         // the model is answered with a call it did not make.
         Reply reply = reading().read(oneEditInTwoFragments());
 
+        assertEquals(1, reply.calls().size(),
+                "ONE call, which is what the title of this test claims: the four braces in the "
+                        + "arguments are characters inside a string and a splitter that closes an "
+                        + "object on one of them reports a second call the model never asked for. "
+                        + "What came back was " + reply.calls());
         assertEquals(new Called("call_e", "edit",
                         "{\"old\":\"if (a) {\",\"new\":\"} else {\"}"),
                 reply.calls().get(0),

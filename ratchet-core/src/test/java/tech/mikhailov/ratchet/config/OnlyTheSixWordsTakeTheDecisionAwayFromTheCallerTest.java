@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * THE SIX WORDS DECIDE AND NOTHING ELSE DOES: {@code 1/true/yes} and {@code 0/false/no} take the
@@ -45,6 +46,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * of them; the four tests below sweep every variable rather than the first one the map hands
  * back, which is the difference between "the rule holds" and "the rule held for one sample, and
  * the next machine's first entry is a different sample".
+ *
+ * <p>AND BECAUSE THE MACHINE SUPPLIES THE TABLE, THE MACHINE CAN SUPPLY AN EMPTY ONE. A sweep
+ * that finds no row to assert on passes, and a pass is how this file would say "the six words
+ * decide" on a box where it checked none of them — the same silent green the file beside this one
+ * exists to argue against. So the six-words test counts its rows first and ABORTS when there are
+ * none: on a plain machine it lands in the report as not run, with the reason, rather than as a
+ * fourth pass. It is an abort and not a failure because a red build on every launcher that did
+ * not happen to export a yes is a test demanding the environment be arranged for it, which is the
+ * thing this file refuses to do.
  *
  * <p>WHAT THAT IS WORTH, MEASURED RATHER THAN CLAIMED — and it is worth less than the count
  * suggests, which is the point of writing it down. Env has 28 mutants; 18 die to the file beside
@@ -149,7 +159,27 @@ class OnlyTheSixWordsTakeTheDecisionAwayFromTheCallerTest {
         // ignores the environment and returns what it was given, which is exactly the mutant that
         // survives at Env line 28. Whether this loop reaches a row at all is the launcher's doing
         // and not this file's — see the class comment, which is where that is counted.
-        for (Map.Entry<String, String> variable : theVariablesThisJvmWasLaunchedWith) {
+        List<Map.Entry<String, String>> theRowsThisMachineHappensToSupply =
+                theVariablesThisJvmWasLaunchedWith.stream()
+                        .filter(variable -> aWordTheRuleKnows(variable.getValue()))
+                        .toList();
+
+        // AND THIS IS WHERE IT IS SAID OUT LOUD RATHER THAN PASSED OVER. Measured: on a machine
+        // whose environment is PATH, HOME, LANG and JAVA_HOME, the loop below runs zero times, and
+        // without this line the test reports a pass for the requirement in this file's name having
+        // checked none of it — all ten of Env's live mutants survive that pass. An abort puts it in
+        // the surefire report as NOT RUN, which is what it is; a failure would make the build red
+        // on every machine whose launcher was not arranged for this test, and that is worse.
+        assumeFalse(theRowsThisMachineHappensToSupply.isEmpty(),
+                "nothing in this JVM's environment is set to any of "
+                        + THE_THREE_WORDS_THAT_MEAN_YES + " or " + THE_THREE_WORDS_THAT_MEAN_NO
+                        + ", so the six words themselves were not exercised here at all. Nothing "
+                        + "about Env is being reported as correct by this test on this machine — "
+                        + "and until Env exposes the rule as a function of a string, nothing can: "
+                        + "RATCHET_THINKING=yes turning thinking on is asserted nowhere in this "
+                        + "library");
+
+        for (Map.Entry<String, String> variable : theRowsThisMachineHappensToSupply) {
             String name = variable.getKey();
             String word = variable.getValue().toLowerCase(Locale.ROOT);
 
@@ -184,9 +214,7 @@ class OnlyTheSixWordsTakeTheDecisionAwayFromTheCallerTest {
         // sample, and the next machine's first entry is a different sample.
         for (Map.Entry<String, String> variable : theVariablesThisJvmWasLaunchedWith) {
             String name = variable.getKey();
-            String word = variable.getValue().toLowerCase(Locale.ROOT);
-            if (THE_THREE_WORDS_THAT_MEAN_YES.contains(word)
-                    || THE_THREE_WORDS_THAT_MEAN_NO.contains(word)) {
+            if (aWordTheRuleKnows(variable.getValue())) {
                 continue;
             }
 
@@ -202,5 +230,20 @@ class OnlyTheSixWordsTakeTheDecisionAwayFromTheCallerTest {
                             + "rule cannot be what turns a setting on, and asserted one way round "
                             + "only, a flag that read every set value as yes would pass here");
         }
+    }
+
+    /**
+     * Whether {@link Env#flag} would answer from this value rather than from the caller's fallback.
+     *
+     * <p>Case-folded exactly as {@code flag} folds it, and blank is deliberately not a word the
+     * rule knows: an exported {@code ""} is the same non-decision as an unset name, so it belongs
+     * on the caller's side of the split. The two halves of the table are asserted through this one
+     * function so that they cannot drift into overlapping — a value counted as known by one test
+     * and unknown by the other would let both pass while the rule underneath was wrong.
+     */
+    private static boolean aWordTheRuleKnows(String value) {
+        String word = value.toLowerCase(Locale.ROOT);
+        return THE_THREE_WORDS_THAT_MEAN_YES.contains(word)
+                || THE_THREE_WORDS_THAT_MEAN_NO.contains(word);
     }
 }
