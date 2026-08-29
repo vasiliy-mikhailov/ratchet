@@ -101,13 +101,27 @@ public final class Wire implements Chat {
 
     /** Everything from the environment, which is what {@link Model} hands most callers. */
     public static Chat to(Endpoint endpoint) {
-        return new Wire(endpoint, Sampling.fromEnv(), Watch.fromEnv(), true, null, Now.SYSTEM);
+        return new Wire(endpoint, Sampling.fromEnv(), Watch.fromEnv(), true, null, Now.SYSTEM,
+                Keeping.fromEnv());
     }
 
     /** Everything chosen. Nothing here reads the environment. */
     public static Chat to(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking,
                           Trace trace) {
-        return new Wire(endpoint, sampling, watch, thinking, trace, Now.SYSTEM);
+        return to(endpoint, sampling, watch, thinking, trace, Keeping.shipped());
+    }
+
+    /**
+     * THE SAME, WITH THE RECORD'S OWN BOUNDS CHOSEN.
+     *
+     * <p>{@link Listening} held three literals no caller could reach, and the one that mattered cut
+     * 41% of a consumer's tool results while saying only {@code (truncated)}. This is the door that
+     * makes them a value; {@link Keeping#everything()} is the answer to a consumer who wants the
+     * exchange whole.
+     */
+    public static Chat to(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking,
+                          Trace trace, Keeping keeping) {
+        return new Wire(endpoint, sampling, watch, thinking, trace, Now.SYSTEM, keeping);
     }
 
     /**
@@ -121,7 +135,13 @@ public final class Wire implements Chat {
      */
     public static Chat to(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking,
                           Trace trace, Now now) {
-        return new Wire(endpoint, sampling, watch, thinking, trace, now);
+        return to(endpoint, sampling, watch, thinking, trace, now, Keeping.shipped());
+    }
+
+    /** Everything chosen, the clock and the record's bounds included. */
+    public static Chat to(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking,
+                          Trace trace, Now now, Keeping keeping) {
+        return new Wire(endpoint, sampling, watch, thinking, trace, now, keeping);
     }
 
     Wire(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking, Trace trace) {
@@ -130,6 +150,11 @@ public final class Wire implements Chat {
 
     Wire(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking, Trace trace,
          Now now) {
+        this(endpoint, sampling, watch, thinking, trace, now, Keeping.shipped());
+    }
+
+    Wire(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking, Trace trace,
+         Now now, Keeping keeping) {
         this.now = now;
         this.endpoint = endpoint;
         this.sampling = sampling;
@@ -140,7 +165,7 @@ public final class Wire implements Chat {
         // one of them — a null listener, then a null check at each of its three call sites. Four
         // lines that can only ever be wrong, for the one caller that passes no trace.
         this.trace = trace == null ? Trace.quiet() : trace;
-        this.listening = new Listening(this.trace);
+        this.listening = new Listening(this.trace, keeping);
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
                 .version(endpoint.secure() ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1)

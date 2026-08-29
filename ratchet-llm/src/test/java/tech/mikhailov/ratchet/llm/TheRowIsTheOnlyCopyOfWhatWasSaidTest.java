@@ -18,6 +18,7 @@ import tech.mikhailov.ratchet.record.Trace;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -170,37 +171,112 @@ class TheRowIsTheOnlyCopyOfWhatWasSaidTest {
                 "no name, so nothing to attribute it to and no arrow");
     }
 
+    /**
+     * THE ONE BOUND THAT IS PAID AGAIN, and the reason the three are not one number.
+     *
+     * <p>The render re-emits every message of the conversation on EVERY call, so a message from
+     * round three is written again in every round after it. That squaring is what {@link Listening}
+     * was shaped against, and it is true of this column and of neither of the other two.
+     *
+     * <p>THE BOUND IS THE TEST'S OWN. What stood here named 900 in the requirement itself, which
+     * made 900 look measured; the number was in fact wrong for two of the three columns and cut
+     * 41% of one consumer's tool results. A requirement that pins the SIDE survives the number
+     * moving, and this one would still be true at any bound.
+     */
     @Test
-    void nineHundredCharactersIsInsideTheBoundAndNineHundredAndOneIsNot() {
-        // OFF BY ONE HERE IS A LIE ABOUT A COMPLETE MESSAGE. The boundary mutant survived, and what
-        // it ships is "... (truncated)" written under a message that was recorded whole.
+    void theRenderOfEachTurnIsBoundedBecauseEveryLaterCallWritesItAgain() {
         Written record = Written.kept();
-        Listening listening = new Listening(record);
+        Listening listening = new Listening(record, Keeping.shipped().withTurn(50));
 
-        listening.sending(Ask.of(List.of(Said.user("x".repeat(900)))));
-        listening.sending(Ask.of(List.of(Said.user("y".repeat(901)))));
+        listening.sending(Ask.of(List.of(Said.user("y".repeat(200)))));
 
-        assertEquals("[user]\n" + "x".repeat(900), record.rows.get(0).sent(),
-                "exactly at the bound is a whole message and must not claim to be cut");
-        assertEquals("[user]\n" + "y".repeat(900) + "\n... (truncated)",
-                record.rows.get(1).sent(),
-                "one character over is cut AT the bound and says so, rather than being kept whole "
-                        + "because the record is the thing that has to stay small");
+        assertEquals("[user]\n" + "y".repeat(50) + "\n... (truncated, total 200 chars)",
+                record.rows.get(0).sent(),
+                "the render is cut at whatever the caller chose, and says how much there was");
     }
 
+    /** The off-by-one the old requirement existed for: its comment says the boundary mutant lived. */
     @Test
-    void theAnswerIsHeldToTheSameBoundAndSaysWhenItWasCut() {
-        // tail() could return "" for every answer in the corpus and every test stayed green. These
-        // two assertions are the whole of that column's contract.
+    void aTurnExactlyAtItsBoundIsWholeAndDoesNotClaimToHaveBeenCut() {
         Written record = Written.kept();
-        Listening listening = new Listening(record);
+        Listening listening = new Listening(record, Keeping.shipped().withTurn(50));
 
-        listening.back(ask(), reply("z".repeat(900)), 1);
-        listening.back(ask(), reply("z".repeat(901)), 1);
+        listening.sending(Ask.of(List.of(Said.user("x".repeat(50)))));
 
-        assertEquals("z".repeat(900), record.rows.get(0).got(), "enough to recognise, kept whole");
-        assertEquals("z".repeat(900) + "\n... (truncated)", record.rows.get(1).got(),
-                "and not enough to reproduce the conversation on disk");
+        assertEquals("[user]\n" + "x".repeat(50), record.rows.get(0).sent(),
+                "exactly at the bound is a whole message and must not claim to be cut");
+    }
+
+    /**
+     * WRITTEN ONCE, SO IT IS KEPT. The answer is in no other column of any file this library
+     * writes, and unlike the render it is never re-emitted, so bounding it bought nothing and cost
+     * the record its only copy of what the model said.
+     */
+    @Test
+    void theAnswerIsKeptWholeBecauseTheRowIsTheOnlyCopyOfWhatTheModelSaid() {
+        Written record = Written.kept();
+        Listening listening = new Listening(record, Keeping.shipped());
+
+        listening.back(ask(), reply("z".repeat(5_000)), 1);
+
+        assertEquals("z".repeat(5_000), record.rows.get(0).got(),
+                "five thousand characters is an ordinary answer and the shipped record keeps it");
+    }
+
+    /**
+     * ALSO WRITTEN ONCE, AND IT IS THE INSTRUCTION IN FORCE. One consumer's briefs run a median of
+     * 7,394 characters, so the 4,000 that stood here kept barely half of the median one.
+     */
+    @Test
+    void theBriefIsKeptWholeBecauseTheColumnExistsToShowWhichInstructionWasInForce() {
+        Written record = Written.kept();
+        Listening listening = new Listening(record, Keeping.shipped());
+        String brief = "b".repeat(20_000);
+
+        listening.sending(new Ask(List.of(Said.system(brief), Said.user("go")), List.of(), "a"));
+        listening.sending(new Ask(List.of(Said.system(brief), Said.user("go")), List.of(), "a"));
+
+        assertTrue(record.rows.get(0).sent().contains(brief),
+                "the first time an agent is seen its brief is written whole");
+        assertFalse(record.rows.get(1).sent().contains(brief),
+                "and named rather than repeated after that, which is the saving that is real");
+    }
+
+    /**
+     * THE SENTENCE WHOSE ABSENCE HID THE BOUND FOR EIGHT RELEASES.
+     *
+     * <p>A marker reading only {@code (truncated)} censors the distribution at the clip. One
+     * consumer measured p90 = p99 = max = 916 on this column — 900 plus the old marker — and could
+     * not tell from the corpus whether the agent had been starved or the display had. A total makes
+     * a wrong bound visible from the record alone, with nothing re-run.
+     */
+    @Test
+    void whateverIsCutSaysHowMuchThereWasSoTheColumnIsNotCensored() {
+        Written record = Written.kept();
+        Listening listening = new Listening(record, Keeping.shipped().withAnswer(10));
+
+        listening.back(ask(), reply("z".repeat(14_203)), 1);
+
+        assertEquals("z".repeat(10) + "\n... (truncated, total 14203 chars)",
+                record.rows.get(0).got(),
+                "the size of the whole thing, so a reader knows whether to go looking for the rest");
+    }
+
+    /** Three bounds and not one field read three times. */
+    @Test
+    void raisingWhatTheAnswerKeepsDoesNotRaiseWhatTheRenderKeeps() {
+        Written record = Written.kept();
+        Keeping tight = Keeping.shipped().withTurn(50).withAnswer(50);
+        Listening listening = new Listening(record, tight.withAnswer(9_000));
+
+        listening.sending(Ask.of(List.of(Said.user("y".repeat(200)))));
+        listening.back(ask(), reply("z".repeat(200)), 1);
+
+        assertEquals("z".repeat(200), record.rows.get(1).got(),
+                "the answer moved because that is the bound that was raised");
+        assertTrue(record.rows.get(0).sent().contains("truncated, total 200 chars"),
+                "and the render did not, because it is a different number: "
+                        + record.rows.get(0).sent());
     }
 
     @Test

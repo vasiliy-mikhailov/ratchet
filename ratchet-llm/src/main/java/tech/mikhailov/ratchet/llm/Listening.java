@@ -54,8 +54,22 @@ public final class Listening {
     /** Agents whose system prompt this run has already written down once. */
     private final Set<String> promptRecorded = ConcurrentHashMap.newKeySet();
 
+    /**
+     * HOW MUCH OF EACH COLUMN SURVIVES ONTO DISK, chosen by whoever built the client.
+     *
+     * <p>Three numbers used to be written here as literals: 4,000 on the prompt and 900 twice. See
+     * {@link Keeping} for what a consumer's corpus said about them and why they are not one number.
+     */
+    private final Keeping keeping;
+
+    /** The shipped bounds, which is what every caller had before {@link Keeping} existed. */
     Listening(Trace trace) {
+        this(trace, Keeping.shipped());
+    }
+
+    Listening(Trace trace, Keeping keeping) {
         this.trace = trace;
+        this.keeping = keeping;
     }
 
     /**
@@ -81,7 +95,7 @@ public final class Listening {
             String tools = reply.calls().stream().map(Called::name).distinct()
                     .reduce((a, b) -> a + "," + b).orElse("");
             trace.exchanged(new Trace.Exchange("back", ask.from(), sent.size(), "",
-                    tail(reply.said()), tools, reply.ending().name(),
+                    clip(reply.said(), keeping.answer()), tools, reply.ending().name(),
                     reply.spend().prompt(), reply.spend().completion(), ms, ""));
         } catch (RuntimeException recordingMustNotBreakTheRun) {
             // A LISTENER THAT THROWS TAKES THE CALL WITH IT. Nothing here is worth failing a run
@@ -131,14 +145,15 @@ public final class Listening {
                 if (promptRecorded.add(key)) {
                     out.append("[system: ").append(agent.isBlank() ? "unrecognised" : agent)
                             .append(", ").append(m.text().length()).append(" chars]\n")
-                            .append(clip(m.text(), 4000)).append("\n\n");
+                            .append(clip(m.text(), keeping.prompt())).append("\n\n");
                 } else {
                     out.append("[system: ").append(agent).append("'s prompt, unchanged, ")
                             .append(m.text().length()).append(" chars]\n\n");
                 }
                 continue;
             }
-            out.append('[').append(role(m)).append("]\n").append(clip(said(m), 900)).append("\n\n");
+            out.append('[').append(role(m)).append("]\n")
+                    .append(clip(said(m), keeping.turn())).append("\n\n");
         }
         return out.toString().strip();
     }
@@ -174,20 +189,22 @@ public final class Listening {
         return m.text();
     }
 
-    private static String clip(String text, int limit) {
-        String s = text == null ? "" : text.strip();
-        return s.length() <= limit ? s : s.substring(0, limit) + "\n... (truncated)";
-    }
-
     /**
-     * Enough to recognise, not enough to reproduce the conversation on disk.
+     * WHATEVER IS CUT SAYS HOW MUCH THERE WAS, which is the sentence whose absence hid this bound
+     * for eight releases. A marker reading only {@code (truncated)} censors the distribution at the
+     * clip: one consumer measured p90 = p99 = max = 916 on the answer column and had to reach for
+     * token counts in another field to learn what the record was withholding. A total makes a wrong
+     * bound visible from the corpus alone, with nothing re-run.
+     *
+     * <p>The form is the one this module already uses at {@link Asking}'s watcher.
      *
      * <p>NEWLINES SURVIVE. They were flattened to keep a trace line short, which turned a prompt
      * into an unreadable ribbon in the one view whose job is showing what was said. The JSON writer
      * escapes them; the page renders them.
      */
-    private static String tail(String text) {
-        String flat = text == null ? "" : text.strip();
-        return flat.length() <= 900 ? flat : flat.substring(0, 900) + "\n... (truncated)";
+    private static String clip(String text, int limit) {
+        String s = text == null ? "" : text.strip();
+        return s.length() <= limit ? s
+                : s.substring(0, limit) + "\n... (truncated, total " + s.length() + " chars)";
     }
 }

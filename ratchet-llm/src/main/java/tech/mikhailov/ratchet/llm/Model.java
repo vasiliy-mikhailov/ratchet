@@ -74,6 +74,26 @@ public final class Model {
         return build(trace, true, endpoint, retry, sampling, watch);
     }
 
+    /**
+     * WHAT THE RECORD KEEPS, CHOSEN AT THE DOOR MOST CONSUMERS ACTUALLY ENTER BY.
+     *
+     * <p>{@link Watch} was made injectable and then reachable only through one {@code forProducer}
+     * overload and {@link Wire#to}, which left a critic and a re-ask with no way to set it. Seven
+     * seams in this library have stopped one step short of the package boundary and every one was
+     * reported by a consumer rather than found here; a bound on the record that a consumer could
+     * only reach by abandoning {@link Model} would be the eighth.
+     */
+    public static Chat forProducer(Trace trace, Endpoint endpoint, Retry retry, Sampling sampling,
+                                   Watch watch, Keeping keeping) {
+        return build(trace, true, endpoint, retry, sampling, watch, keeping);
+    }
+
+    /** The same for a critic, which until now had no {@link Watch} overload at all. */
+    public static Chat forCritic(Trace trace, Endpoint endpoint, Retry retry, Sampling sampling,
+                                 Watch watch, Keeping keeping) {
+        return build(trace, true, endpoint, retry, sampling, watch, keeping);
+    }
+
     public static Chat forProducer(Trace trace, Endpoint endpoint, Retry retry) {
         return build(trace, true, endpoint, retry, Sampling.fromEnv(), Watch.fromEnv());
     }
@@ -119,13 +139,22 @@ public final class Model {
         return build(trace, false, endpoint, retry, Sampling.fromEnv(), Watch.fromEnv());
     }
 
+    /**
+     * THE THIRTEEN DOORS THAT NAME NO {@link Keeping} READ THE ENVIRONMENT FOR ONE, which is what
+     * every one of them already does for {@link Sampling} and {@link Watch}.
+     */
     private static Chat build(Trace trace, boolean thinking, Endpoint endpoint, Retry retry,
                               Sampling sampling, Watch watch) {
+        return build(trace, thinking, endpoint, retry, sampling, watch, Keeping.fromEnv());
+    }
+
+    private static Chat build(Trace trace, boolean thinking, Endpoint endpoint, Retry retry,
+                              Sampling sampling, Watch watch, Keeping keeping) {
         // The same first-non-blank chain as setting(), spelt with Env's own truth rules so there
         // is one place that decides what "yes" means.
         boolean wantThinking = thinking && sampling.thinks() && Env.flag("RATCHET_THINKING",
                 Env.flag("OC_THINKING", Env.flag("BJV_THINKING", true)));
-        return wrap(Wire.to(endpoint, sampling, watch, wantThinking, trace), trace, retry);
+        return wrap(Wire.to(endpoint, sampling, watch, wantThinking, trace, keeping), trace, retry);
     }
 
     /**
