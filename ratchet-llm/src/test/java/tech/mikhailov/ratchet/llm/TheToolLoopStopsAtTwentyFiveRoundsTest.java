@@ -10,6 +10,7 @@ import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -312,5 +313,33 @@ class TheToolLoopStopsAtTwentyFiveRoundsTest {
             offered.add(List.copyOf(ask.tools()));
             return answering.apply(ask);
         }
+    }
+
+    @Test
+    void aSpentRoundBudgetIsNotAskedAgainBecauseTheAnswerCostsTheWholeBudget() {
+        // EVERY OTHER REFUSAL IN THIS LIBRARY COSTS ONE ATTEMPT TO REDISCOVER. This one costs a
+        // conversation: the bound fires after twenty-five rounds of tool calls and a retry re-runs
+        // all twenty-five from nothing, so ten attempts is two hundred and fifty rounds of model
+        // calls to arrive at the same wall. The busiest recorded conversation fitted 465 tool calls
+        // inside that budget.
+        //
+        // It was a bare IllegalStateException, and transportFailures() retries what it does not
+        // recognise — which is right in general, because the cost of retrying something hopeless is
+        // normally one bounded sequence. That reasoning is exactly what does not hold here.
+        //
+        // IT MATTERS BECAUSE OF THE DOOR ratchet#8 OPENED. In the shipped chain Asking sits ABOVE
+        // Retrying, so this never reached the predicate. But Retrying.around exists so a consumer
+        // can wrap something that is not a Chat — its javadoc names a tool invocation and a
+        // third-party agent runtime — and a consumer wrapping their agent loop in it inherited a
+        // retry of the one failure that cannot be retried.
+        assertFalse(Retrying.transportFailures().test(new Exhausted("exceeded 25 rounds")),
+                "asking again re-runs the whole conversation to reach the same wall");
+
+        // THE TYPE IS THE ONLY THING THAT CHANGED, and it must stay catchable the way it was: both
+        // callers catch RuntimeException and file "unreachable", and the message above appears
+        // 60,173 times in one corpus's own record. aModelThatNeverStopsCallingToolsIsCutOffWith-
+        // ThatExactMessage holds those two claims; this only checks the new type keeps them true.
+        assertTrue(new Exhausted("x") instanceof IllegalStateException,
+                "nothing that used to catch this stops catching it");
     }
 }

@@ -125,7 +125,14 @@ public final class Asking implements Agent {
             // BEFORE THE TOOL TEST, not after it. See MAX_ROUNDS: this ordering is the whole
             // difference between an answer on the twenty-fifth round being returned and being lost.
             if (left-- == 0) {
-                throw new IllegalStateException("Something is wrong, exceeded " + MAX_ROUNDS
+                // A TYPE, SO THE RETRY CAN REFUSE IT. This was a bare IllegalStateException, and
+                // transportFailures() retries what it does not recognise — deliberately, since the
+                // cost of retrying something hopeless is one bounded sequence. That reasoning does
+                // not hold here: the retry re-runs all twenty-five rounds from nothing, so ten
+                // attempts is two hundred and fifty rounds of model calls to reach the same wall.
+                // The message is unchanged and the type still extends IllegalStateException, so
+                // every caller that catches this keeps catching it.
+                throw new Exhausted("Something is wrong, exceeded " + MAX_ROUNDS
                         + " sequential tool executions");
             }
             if (!reply.wantsTools()) {

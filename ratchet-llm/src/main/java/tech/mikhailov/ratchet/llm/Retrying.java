@@ -111,6 +111,10 @@ public final class Retrying implements Chat {
      *     time the retry has to have an opinion about it, and the opinion is no: what follows is
      *     {@link Insisting}, which re-asks with thinking off, and thinking off measured 0 of 10
      *     runaway against a 62.5% control.
+     * <li>{@link Exhausted} — the agent spent its round budget, and a retry re-runs all twenty-five
+     *     rounds from nothing. Every other refusal here costs one attempt to rediscover; this one
+     *     costs a conversation, so ten attempts is two hundred and fifty rounds of model calls to
+     *     reach the same wall.
      * <li>An interruption, because a lane being stopped must stop rather than serve out the
      *     schedule.
      * </ul>
@@ -123,6 +127,7 @@ public final class Retrying implements Chat {
             for (Throwable at = failure; at != null; at = at.getCause()) {
                 if (at instanceof GaveUp || at instanceof Truncated
                         || at instanceof Reasoning.LoopDetected
+                        || at instanceof Exhausted
                         || at instanceof InterruptedException) {
                     return false;
                 }
