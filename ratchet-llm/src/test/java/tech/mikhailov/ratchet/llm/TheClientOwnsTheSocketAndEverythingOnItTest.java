@@ -66,7 +66,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
     // ------------------------------------------------------------------ what goes out
 
     @Test
-    void theSilenceIsReportedInAUnitThatSurvivesBeingSmall() {
+    void aStallUnderASecondSaysMillisecondsAndOneOfTwentyMinutesSaysMinutes() {
         // THIS TEST WAS GREEN ON THE EXACT MESSAGE IT EXISTS TO FORBID, and how it failed is the
         // point. It asserted the message did NOT contain "0 minutes" or "0m" — the two spellings
         // the previous bug had produced — and the message was "no token for 0s". A guard written as
@@ -108,7 +108,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
 
     @Test
     @Timeout(60)
-    void aStallAfterTheModelFINISHEDSaysWhyTheMODELStopped() {
+    void aStallAfterTheModelFinishedRecordsTheModelsOwnReasonAndNotTheStalls() {
         // TWO THINGS ENDED AND THEY ENDED FOR DIFFERENT REASONS. The generation finished — the
         // server said `stop` and the tokens are all here — and then the connection sat open and
         // silent, which is a proxy holding a socket rather than a model in trouble. The row records
@@ -132,7 +132,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
 
     @Test
     @Timeout(60)
-    void theBodyIsCLOSEDOnTheWayOutOfEitherKindOfEnding() {
+    void theBodyIsClosedOnTheWayOutOfEitherKindOfEnding() {
         // A STREAM LEFT OPEN IS A GENERATION THE SERVER KEEPS PAYING FOR. Closing the body is what
         // makes the model stop — it is the stated reason the runaway detector throws out of this
         // loop rather than swallowing the detection — and deleting the close leaves every test in
@@ -166,7 +166,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
 
     @Test
     @Timeout(60)
-    void theReaderThreadIsADaemonOrAStalledSweepsJVMNEVEREXITS() {
+    void theReaderThreadIsADaemonOrAStalledSweepLeavesAJvmThatNeverExits() {
         // THE THREAD OUTLIVES THE CALL, ALWAYS. A stall does not stop the reader — it is blocked
         // inside the JDK on a socket that has stopped producing, which is the entire reason the
         // reading happens on its own thread — so every stalled call in a sweep leaves one of these
@@ -190,7 +190,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
 
     @Test
     @Timeout(30)
-    void anInterruptedSTREAMLeavesTheInterruptWhereItFoundIt() throws InterruptedException {
+    void anInterruptWhileStreamingLeavesTheInterruptWhereItFoundIt() throws InterruptedException {
         // CANCELLING A SWEEP MEANS INTERRUPTING THE THREADS IN IT, and a thread that catches an
         // InterruptedException and does not restore the flag has silently declined to be cancelled:
         // the next blocking call it makes does not see it, and a lane that was told to stop asks
@@ -225,7 +225,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
 
     @Test
     @Timeout(30)
-    void anInterruptedREQUESTLeavesTheInterruptWhereItFoundItToo() throws Exception {
+    void anInterruptWhileWaitingForTheModelToAnswerLeavesItThereToo() throws Exception {
         // THE SAME REQUIREMENT AT THE OTHER END OF THE CALL, and the likelier one of the two. A
         // request spends its first minutes waiting for the server to prefill a conversation that
         // grows with every tool call, so a cancellation lands here far more often than it lands

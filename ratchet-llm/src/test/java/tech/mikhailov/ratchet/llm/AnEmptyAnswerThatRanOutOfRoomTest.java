@@ -57,7 +57,7 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
     }
 
     @Test
-    void anEmptyAnswerThatSIMPLYSTOPPEDIsSilenceAndNotATruncation() {
+    void anEmptyAnswerThatSimplyStoppedIsSilenceAndNotATruncation() {
         // The distinction the type exists for. A model that declined to answer finishes with STOP,
         // and that is Insisting's business — re-asking it is exactly right.
         Reply reply = client().read(ended("stop", "", ""));
@@ -67,7 +67,7 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
     }
 
     @Test
-    void anEmptyAnswerThatRanOutOfRoomASKINGFORATOOLIsNotEmptyEITHER() {
+    void anEmptyAnswerThatRanOutOfRoomWhileAskingForAToolIsNotEmptyEither() {
         // The third shape, visible only now that this library parses the frames itself: blank
         // content, finish_reason length, and a tool call in the turn. There IS something to act on,
         // so the guard requires the call list to be empty as well before it refuses the reply.

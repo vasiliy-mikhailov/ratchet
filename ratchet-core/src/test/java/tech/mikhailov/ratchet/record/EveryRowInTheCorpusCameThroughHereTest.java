@@ -136,7 +136,7 @@ class EveryRowInTheCorpusCameThroughHereTest {
      * as well. {@code ABuildThatNeverRanIsNotABuildThatFailedTest} is where the fix itself lives.
      */
     @Test
-    void aBuildThatCouldNotRunIsNotABuildThatFailed(@TempDir Path dir) {
+    void theWrittenRowForABuildThatCouldNotRunCarriesInfraTrueAndPassedFalse(@TempDir Path dir) {
         Path file = dir.resolve("trace.jsonl");
         Trace trace = trace(dir);
 

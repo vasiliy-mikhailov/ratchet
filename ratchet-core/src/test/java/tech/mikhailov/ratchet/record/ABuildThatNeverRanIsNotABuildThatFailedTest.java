@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ABuildThatNeverRanIsNotABuildThatFailedTest {
 
     @Test
-    void aBuildThatCouldNotRunSaysSo(@TempDir Path dir) throws Exception {
+    void theSummaryLineForABuildThatCouldNotRunSaysItDidNotRun(@TempDir Path dir) throws Exception {
         JsonlTrace trace = new JsonlTrace(dir.resolve("t.jsonl"), dir.resolve("s.jsonl"), "run");
 
         trace.built("compile", new Trace.Outcome(true, false, "the toolchain was missing"));

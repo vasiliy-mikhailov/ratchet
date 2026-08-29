@@ -69,7 +69,7 @@ class TheTotalIsBothHalvesOfWhatWasSpentTest {
             + "\"total_tokens\":69,\"completion_tokens\":12}}";
 
     @Test
-    void theTotalIsWHATTHESERVERITSELFCALLEDTHETOTAL() {
+    void theTotalIsWhatTheServerItselfCalledTheTotal() {
         // THE ASSERTION THAT COULD ALWAYS HAVE BEEN MADE AND NEVER WAS. Nothing here is a restated
         // sum: every number is read out of the server's own frame, including the answer, so this
         // test is the reconciliation between our arithmetic and the endpoint's.
@@ -97,7 +97,7 @@ class TheTotalIsBothHalvesOfWhatWasSpentTest {
     }
 
     @Test
-    void aSweepAddsUpAndTheHALVESARENOTINTERCHANGEABLE() {
+    void aSweepAddsUpAndTheHalvesAreNotInterchangeable() {
         // WHY THE METHOD EXISTS AT ALL, per Spend's javadoc: a caller adding up a sweep should not
         // have to ask. Three turns of one tool loop, with the prompt growing because a request here
         // is the whole accumulated conversation re-prefilled — so the prompt half dominates and a
@@ -117,7 +117,7 @@ class TheTotalIsBothHalvesOfWhatWasSpentTest {
     }
 
     @Test
-    void aTurnWHOSEUSAGENEVERARRIVEDTotalsZeroAndThatIsNotTheSameAsFree() {
+    void aTurnWhoseUsageNeverArrivedTotalsZeroAndThatIsNotTheSameAsFree() {
         // The other half of the same requirement. Zero is a legitimate answer — Spend.NONE exists so
         // a caller summing a sweep never has to test for null — but it must mean WE WERE NOT TOLD,
         // and the only way to be not told is for the server to send no usage frame.
@@ -140,7 +140,7 @@ class TheTotalIsBothHalvesOfWhatWasSpentTest {
 
     @Test
     @Timeout(30)
-    void theCountSURVIVESAREALREQUESTBECAUSEWEASKEDFORIT() throws IOException {
+    void theCountSurvivesARealRequestBecauseTheRequestAsksForUsage() throws IOException {
         // END TO END, THROUGH A SOCKET, because the failure this guards against is not arithmetic:
         // it is a run where include_usage never reached the server and every total is honestly zero.
         // The loopback endpoint below behaves the way the real one does — it sends the usage frame

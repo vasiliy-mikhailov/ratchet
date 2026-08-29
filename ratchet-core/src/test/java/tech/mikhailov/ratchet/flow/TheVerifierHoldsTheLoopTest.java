@@ -141,7 +141,7 @@ class TheVerifierHoldsTheLoopTest {
     }
 
     @Test
-    void theWorkspaceIsReadAGAINBEFOREEVERYVERDICTAndNotOnceAtTheStart() throws Exception {
+    void theWorkspaceIsReadAgainBeforeEveryVerdictAndNotOnceAtTheStart() throws Exception {
         // THE FOUNDING REQUIREMENT OF A TRIAD, AND NOTHING ASSERTED IT. Hoist `facts.read()` above
         // the round loop and all 144 tests in ratchet-core stay green — verified by doing it.
         //
