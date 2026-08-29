@@ -1,7 +1,5 @@
 package tech.mikhailov.ratchet.flow;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * THE WORD A REPLY SETTLES ON, WHICH IS THE ONLY CONTROL FLOW A MODEL HAS HERE.
@@ -43,46 +41,48 @@ public final class Reply {
      * "unsound" and "against" outright. And a match immediately preceded by a negation is not a
      * match, which kills "not done".
      */
+    /**
+     * THE VERDICT IS THE FIRST WORD OF A LINE, and everything else is not a verdict.
+     *
+     * <p>WHAT THIS USED TO BE, AND WHY IT IS NOT ANY MORE. Two passes: seven punctuation variants
+     * per allowed word on the first, then a scan of the WHOLE reply as prose — word-boundary
+     * regexes so {@code sound} could not hide inside {@code unsound}, a seventeen-form English
+     * negation detector over a 24-character lookbehind so {@code "this is not done"} did not read
+     * as done, and earliest-match arbitration for a reply that named two verdicts. Sixteen of this
+     * file's forty-six lines.
+     *
+     * <p>All of it defended one case: A VERIFIER THAT ANSWERS IN PROSE. Every verifier in this
+     * library and in the pipeline built on it is plain code returning a literal — {@code "done"} or
+     * {@code "again: <reason>"}, 11 and 24 of them — so that case is not rare here, it has never
+     * occurred. The collisions the word-boundary regex prevented, and the two verdicts the
+     * earliest-match rule arbitrated between, could only arise BECAUSE the reply was being searched
+     * as prose. They were requirements of the implementation rather than of the system.
+     *
+     * <p>The first token of the line, with punctuation trimmed, covers every form the enumeration
+     * covered — {@code done}, {@code done:}, {@code done!}, {@code again, because…} — in one rule
+     * instead of seven, and covers punctuation nobody thought of.
+     *
+     * @return the verdict, or "" when the reply names none. NOT the first allowed word: this used
+     *         to fall back to {@code allowed[0]}, which every caller passes as the approving word,
+     *         so silence approved — and {@link Flow.Triad#verdictOf} carried a second blank check
+     *         to undo it. Two layers doing one job, with the lower one defaulting to the reading
+     *         this project argues against everywhere else. What silence means is now decided once,
+     *         by the caller that knows.
+     */
     public static String word(String reply, String... allowed) {
-        if (reply == null || reply.isBlank()) {
-            return allowed[0];
+        if (reply == null) {
+            return "";
         }
         for (String line : reply.lines().toList()) {
-            String l = line.strip().toLowerCase().replaceFirst("^[-*>#`\\s]+", "");
+            String first = line.strip().toLowerCase()
+                    .replaceFirst("^[-*>#`\\s]+", "")
+                    .split("[\\s\\p{Punct}]", 2)[0];
             for (String w : allowed) {
-                if (l.equals(w) || l.startsWith(w + ":") || l.startsWith(w + " ")
-                        || l.startsWith(w + ".") || l.startsWith(w + ",")
-                        || l.startsWith(w + ";") || l.startsWith(w + "!")) {
+                if (first.equals(w)) {
                     return w;
                 }
             }
         }
-        String lower = reply.toLowerCase();
-        int best = Integer.MAX_VALUE;
-        String chosen = allowed[0];
-        for (String w : allowed) {
-            Matcher m = Pattern.compile("\\b" + Pattern.quote(w) + "\\b").matcher(lower);
-            while (m.find()) {
-                if (negated(lower, m.start())) {
-                    continue;
-                }
-                if (m.start() < best) {
-                    best = m.start();
-                    chosen = w;
-                }
-                break;
-            }
-        }
-        return chosen;
+        return "";
     }
-
-    /** Whether the words just before a match turn it into its opposite. */
-    private static boolean negated(String text, int at) {
-        String before = text.substring(Math.max(0, at - 24), at);
-        return NEGATION.matcher(before).find();
-    }
-
-    private static final Pattern NEGATION = Pattern.compile(
-            "\\b(not|isn't|isnt|is not|no|never|nothing|cannot|can't|cant|wasn't|wasnt|"
-                    + "aren't|arent|hasn't|hasnt|far from|less than)\\b[\\s\\p{Punct}]*$");
 }

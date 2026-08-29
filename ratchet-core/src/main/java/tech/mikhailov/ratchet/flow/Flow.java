@@ -475,10 +475,13 @@ public final class Flow {
          * reading of silence that loses work.
          */
         private static String verdictOf(String judgement) {
-            if (judgement == null || judgement.isBlank()) {
-                return "again";
-            }
-            return Reply.word(judgement, "done", "again", "replan");
+            // WHAT SILENCE MEANS IS DECIDED HERE, ONCE. Reply.word used to fall back to its first
+            // argument — which this call passes as "done" — so a verifier that said nothing
+            // approved, and the blank check above existed to undo it. Two layers doing one job,
+            // with the lower one defaulting to the reading that loses work. Reply.word answers ""
+            // for a reply that names no verdict now, and a reply that names no verdict is again.
+            String said = Reply.word(judgement, "done", "again", "replan");
+            return said.isEmpty() ? "again" : said;
         }
 
         /**

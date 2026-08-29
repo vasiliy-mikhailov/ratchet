@@ -1,6 +1,5 @@
 package tech.mikhailov.ratchet.config;
 
-import java.util.Map;
 
 /**
  * Process environment, with blank treated as unset.
@@ -38,15 +37,4 @@ public final class Env {
         return fallback;
     }
 
-    public static void copy(Map<String, String> env, String name, String fallback) {
-        env.put(name, get(name, fallback));
-    }
-
-    /** Only when set, so a missing cache is not mounted as a path that does not exist. */
-    public static void copyIfSet(Map<String, String> env, String name) {
-        String v = get(name);
-        if (v != null) {
-            env.put(name, v);
-        }
-    }
 }
