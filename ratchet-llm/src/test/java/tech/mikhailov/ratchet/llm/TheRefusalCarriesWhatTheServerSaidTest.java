@@ -147,7 +147,7 @@ class TheRefusalCarriesWhatTheServerSaidTest {
     }
 
     @Test
-    void aPageOfHtmlIsFlattenedOntoOneLineAndCutAtThreeHundred() {
+    void aPageOfHtmlIsFlattenedOntoOneLineAndCutAtTheBound() {
         // THE COST BEING AVOIDED, IN CHARACTERS. This body is 9,000 characters of proxy error page.
         // A 502 is retriable, so it arrives ten times in one stage, and every arrival is a progress
         // note plus an exchange row — twenty record lines carrying the same page.
@@ -167,7 +167,7 @@ class TheRefusalCarriesWhatTheServerSaidTest {
     }
 
     @Test
-    void aBodyOfExactlyThreeHundredCharactersIsSaidWhole() {
+    void aBodyExactlyAtTheBoundIsSaidWhole() {
         // The boundary, which is a live mutant on its own: `<= 300` weakened to `< 300` cuts a body
         // that fits and marks it with an ellipsis, so a reader is told the record is incomplete
         // when it is not, and goes looking for the rest of an error that has no rest.

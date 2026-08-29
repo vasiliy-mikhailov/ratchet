@@ -355,7 +355,7 @@ class EveryDoorIntoTheModelOpensOnTheSameOneTest {
     }
 
     @Test
-    void whatADeploymentThatHasSetNothingGets() {
+    void theDefaultsADeploymentNeverSetAreTheOnesItAlwaysHad() {
         // The reachable end of the RATCHET_/OC_/BJV_ chain: every one of these resolves through
         // Model.setting and none of them had a number written down in a test. They are the four
         // that were private static finals parsed at class load before Endpoint, Watch and Sampling

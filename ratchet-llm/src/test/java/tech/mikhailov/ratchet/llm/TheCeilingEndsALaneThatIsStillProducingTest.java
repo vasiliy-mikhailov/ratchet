@@ -109,7 +109,7 @@ class TheCeilingEndsALaneThatIsStillProducingTest {
     }
 
     @Test
-    void aCeilingUnderAnHourSaysMinutesRatherThanZeroHours() {
+    void theCeilingReportsAUnitThatSurvivesBeingSmall() {
         // Since Watch became a per-call value a consumer may set minutes, and the message rendered
         // ceiling.toHours() — so anything under an hour announced itself as "after 0h", which reads
         // as a broken guard rather than a fact about the connection.

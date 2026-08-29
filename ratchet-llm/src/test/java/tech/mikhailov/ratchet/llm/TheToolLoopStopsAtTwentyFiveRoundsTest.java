@@ -230,7 +230,7 @@ class TheToolLoopStopsAtTwentyFiveRoundsTest {
     }
 
     @Test
-    void aListenerIsToldAboutEachCallAndIsShownAtMostEightThousandCharacters() {
+    void aListenerIsToldAboutEachCallAndIsShownAtMostTheWatchersBound() {
         String huge = "x".repeat(9_000);
         Map<Tool, Calling> tools = new LinkedHashMap<>();
         tools.put(spec("ping"), call -> huge);

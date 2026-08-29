@@ -205,7 +205,7 @@ class WhatAConsumerLeavesOutIsAnsweredAndWhatItGetsWrongIsRefusedTest {
     }
 
     @Test
-    void aResultOfExactlyEightThousandCharactersIsShownWhole() {
+    void aResultExactlyAtTheWatchersBoundIsShownWhole() {
         // THE EDGE ITSELF. Eight thousand characters is what a listener may be shown, so a result
         // of exactly eight thousand is shown all of them: the bound is inclusive, and the
         // difference between that and the alternative is one character of a result and a truncation

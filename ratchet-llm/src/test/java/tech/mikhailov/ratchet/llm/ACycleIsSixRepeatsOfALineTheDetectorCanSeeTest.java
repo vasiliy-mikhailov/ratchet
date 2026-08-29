@@ -94,7 +94,7 @@ class ACycleIsSixRepeatsOfALineTheDetectorCanSeeTest {
     }
 
     @Test
-    void aLineOfExactlySixtyCharactersIsSubstantial() {
+    void aLineExactlyAtTheLengthThresholdIsSubstantial() {
         Recorder r = new Recorder();
         assertEquals(60, SUBSTANTIAL.length(),
                 "this fixture IS the boundary, so it has to sit on it exactly: " + SUBSTANTIAL);

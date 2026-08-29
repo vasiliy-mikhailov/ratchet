@@ -126,7 +126,7 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
     }
 
     @Test
-    void aDeploymentThatSetsNothingGetsTheShippedBounds() {
+    void theEnvironmentDoorAnswersExactlyAsTheShippedPolicyDoes() {
         String any = "some text";
         for (Keeping.Column column : Keeping.Column.values()) {
             assertEquals(Keeping.shipped().room(column, any), Keeping.fromEnv().room(column, any),

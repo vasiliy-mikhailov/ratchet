@@ -66,7 +66,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
     // ------------------------------------------------------------------ what goes out
 
     @Test
-    void aStallUnderASecondSaysMillisecondsAndOneOfTwentyMinutesSaysMinutes() {
+    void theStallReportsAUnitThatSurvivesBeingSmall() {
         // THIS TEST WAS GREEN ON THE EXACT MESSAGE IT EXISTS TO FORBID, and how it failed is the
         // point. It asserted the message did NOT contain "0 minutes" or "0m" — the two spellings
         // the previous bug had produced — and the message was "no token for 0s". A guard written as

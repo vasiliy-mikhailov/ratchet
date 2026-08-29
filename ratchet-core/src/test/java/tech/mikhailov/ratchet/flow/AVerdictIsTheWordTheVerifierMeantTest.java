@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class AVerdictIsTheWordTheVerifierMeantTest {
 
     @Test
-    void theFirstWordOfALineIsTheVerdictHoweverItIsPunctuated() {
+    void aLineThatOpensWithAVerdictIsThatVerdictHoweverItIsDecorated() {
         // ONE RULE INSTEAD OF SEVEN CLAUSES. The old code enumerated `done`, `done:`, `done `,
         // `done.`, `done,`, `done;` and `done!` and would have missed the eighth punctuation mark
         // somebody eventually used.
