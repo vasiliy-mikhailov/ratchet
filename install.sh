@@ -9,7 +9,7 @@
 #
 #   ./install.sh                      the newest tag, into ~/.m2
 #   ./install.sh v0.5.0               a specific one
-#   ./install.sh v0.15.0 -r ~/.m2-fitness/repository   into a repository another build reads
+#   ./install.sh v0.15.1 -r ~/.m2-fitness/repository   into a repository another build reads
 #
 # `-r` becomes -Dmaven.repo.local, which wants the REPOSITORY directory, not the `.m2` above it.
 # The example in 0.11.1 said `~/.m2-fitness` and would have installed a directory level too high.
@@ -108,7 +108,10 @@ for module in ratchet-core ratchet-llm; do
     [ -f "$jar" ] || missing="$missing $module"
 done
 if [ -n "$missing" ]; then
-    echo "install.sh: the build succeeded but these did not land in $into:$missing" >&2
+    echo "install.sh: the build succeeded but these are not visible at $into:$missing" >&2
+    echo "install.sh: if 'mvn' here is a wrapper (docker, toolbox) that remaps the repository," >&2
+    echo "install.sh: they may have landed where IT can see rather than where this script looked." >&2
+    echo "install.sh: pass -r as the path that wrapper expects, and check inside it." >&2
     exit 1
 fi
 

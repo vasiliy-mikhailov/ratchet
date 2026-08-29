@@ -35,8 +35,11 @@ class AVerdictIsTheWordTheVerifierMeantTest {
     void theFirstWordOfALineIsTheVerdictHoweverItIsPunctuated() {
         // ONE RULE INSTEAD OF SEVEN CLAUSES. The old code enumerated `done`, `done:`, `done `,
         // `done.`, `done,`, `done;` and `done!` and would have missed the eighth punctuation mark
-        // somebody eventually used. Trimming the token covers all of them and the ones nobody
-        // thought of.
+        // somebody eventually used.
+        //
+        // THE FIRST ATTEMPT AT THE ONE RULE WAS WRONG, and this comment argued for it: it split the
+        // LINE on [\s\p{Punct}] and compared the first token, which is the same rule only while
+        // every allowed word is one word. See aVerdictMadeOfTwoWordsJoinedByAHyphenIsMatchedWhole.
         for (String said : new String[]{"done", "done:", "done.", "done!", "done — nothing left",
                                         "  done  ", "- done", "> done", "`done`"}) {
             assertEquals("done", Reply.word(said, "done", "again", "replan"),
@@ -56,9 +59,9 @@ class AVerdictIsTheWordTheVerifierMeantTest {
 
     @Test
     void aWordInsideAnotherWordIsNotAVerdict() {
-        // FREE UNDER THE FIRST-TOKEN RULE, where it cost a word-boundary regex under the old one.
-        // Kept because the requirement is real even though the defence is now structural: a line
-        // beginning "against" or "unsound" must not be read as "again" or "done".
+        // The defence is that the allowed word must END where it ends: "against" continues with a
+        // letter after "again", so the word did not end there. A line beginning "against" or
+        // "unsound" must not be read as "again" or "done".
         assertEquals("", Reply.word("against the plan as written", "done", "again", "replan"));
         assertEquals("", Reply.word("unsound reasoning throughout", "done", "again", "replan"));
     }
@@ -72,6 +75,38 @@ class AVerdictIsTheWordTheVerifierMeantTest {
         assertEquals("", Reply.word("the chapter is long and I am unsure", "done", "again"));
         assertEquals("", Reply.word("", "done", "again"));
         assertEquals("", Reply.word(null, "done", "again"));
+    }
+
+    /**
+     * REPORTED FROM OUTSIDE, AND UNSEEABLE FROM IN HERE.
+     *
+     * <p>The vocabulary this library itself asks for is {@code done}, {@code again} and
+     * {@code replan} — three single words — so every test in this repository passed while
+     * {@code \p{Punct}} silently ate the hyphen out of a consumer's. Their verdicts are
+     * {@code blocked-dependency}, {@code behavior-change}, {@code off-target} and
+     * {@code wrong-call}, and on 0.15.0 every one of them came back as the empty string into the
+     * field their whole corpus is aggregated on.
+     */
+    @Test
+    void aVerdictMadeOfTwoWordsJoinedByAHyphenIsMatchedWhole() {
+        String[] theirs = {"blocked-dependency", "behavior-change", "off-target", "done"};
+
+        assertEquals("blocked-dependency",
+                Reply.word("blocked-dependency: the parent pom is not published", theirs));
+        assertEquals("behavior-change",
+                Reply.word("behavior-change: the serialiser now emits nulls", theirs));
+        assertEquals("off-target", Reply.word("- off-target: it fixed something else", theirs));
+        assertEquals("done", Reply.word("done: all green", theirs),
+                "and a one-word verdict in the same vocabulary still reads");
+    }
+
+    /** The other half of the same rule, or the fix would let a prefix answer for the whole. */
+    @Test
+    void aShorterVerdictDoesNotSwallowALongerOneThatBeginsWithIt() {
+        assertEquals("", Reply.word("blocked-dependency: the parent pom is missing", "blocked"),
+                "a line saying blocked-dependency has not said blocked");
+        assertEquals("blocked", Reply.word("blocked: the parent pom is missing", "blocked"),
+                "and the shorter word still reads when it is what was actually written");
     }
 
     @Test

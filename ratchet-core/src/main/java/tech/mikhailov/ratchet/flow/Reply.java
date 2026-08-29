@@ -36,10 +36,16 @@ public final class Reply {
      * which is precisely backwards for a construction whose whole purpose is that a reviewer can
      * stop the work.
      *
-     * <p>Three rules, in order. A line that STARTS with one of the words is the verdict, because
-     * that is what every prompt asks for. Failing that, a whole-word match wins, which kills
-     * "unsound" and "against" outright. And a match immediately preceded by a negation is not a
-     * match, which kills "not done".
+     * <p>ONE RULE. A line that OPENS with one of the caller's words, and ends it there, is the
+     * verdict. That is what every prompt asks for, and it kills "unsound", "against" and "not done"
+     * structurally rather than by three further rules that each had to be got right.
+     *
+     * <p>NOTHING MATCHED IS THE EMPTY STRING, AND THIS CHANGED IN 0.15.0. Until 0.14.0 a silent or
+     * verdictless reply returned {@code allowed[0]}, and the only caller passes the APPROVING word
+     * first, so a verifier that wrote a paragraph without a verdict approved the work. It answers
+     * nothing now and the caller decides what nothing means — {@link Flow#triad} reads it as
+     * {@code again}. A consumer calling this directly must handle the empty string; there is
+     * deliberately no default, because a default here is a vote nobody cast.
      */
     /**
      * THE VERDICT IS THE FIRST WORD OF A LINE, and everything else is not a verdict.
@@ -74,15 +80,41 @@ public final class Reply {
             return "";
         }
         for (String line : reply.lines().toList()) {
-            String first = line.strip().toLowerCase()
-                    .replaceFirst("^[-*>#`\\s]+", "")
-                    .split("[\\s\\p{Punct}]", 2)[0];
+            String opening = line.strip().toLowerCase().replaceFirst("^[-*>#`\\s]+", "");
             for (String w : allowed) {
-                if (first.equals(w)) {
+                if (opening.startsWith(w) && ended(opening, w.length())) {
                     return w;
                 }
             }
         }
         return "";
+    }
+
+    /**
+     * THE ALLOWED WORD ENDED HERE, rather than being the opening of a longer one.
+     *
+     * <p>This used to split the LINE on {@code [\s\p{Punct}]} and compare the first token, which
+     * reads as the simpler rule and is the same rule only while every allowed word is one word.
+     * {@code \p{Punct}} contains the hyphen, so a vocabulary of {@code blocked-dependency},
+     * {@code behavior-change} and {@code off-target} tokenised to {@code blocked}, {@code behavior}
+     * and {@code off}, none of which can equal what the caller allowed. Every such verdict came
+     * back as the empty string, silently, into the one field a corpus is aggregated on.
+     *
+     * <p>IT PASSED EVERYTHING BECAUSE OF WHAT THIS LIBRARY ITSELF ASKS FOR. The only caller in
+     * ratchet passes {@code done}, {@code again} and {@code replan} — three single words — so no
+     * test here could see it, and it was reported by the consumer whose vocabulary is hyphenated.
+     * The bound is now measured from the END of the caller's word, so the vocabulary decides where
+     * the token ends instead of a character class guessing.
+     *
+     * <p>A hyphen and an underscore count as continuing the word, which is what stops
+     * {@code blocked} matching a line that says {@code blocked-dependency}: a shorter verdict must
+     * not swallow a longer one that happens to begin with it.
+     */
+    private static boolean ended(String opening, int at) {
+        if (at == opening.length()) {
+            return true;
+        }
+        char next = opening.charAt(at);
+        return !Character.isLetterOrDigit(next) && next != '-' && next != '_';
     }
 }
