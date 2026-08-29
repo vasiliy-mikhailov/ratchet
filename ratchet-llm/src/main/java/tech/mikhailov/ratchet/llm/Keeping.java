@@ -61,10 +61,30 @@ public record Keeping(int prompt, int turn, int answer) {
     private static final int BACKSTOP = 262_144;
 
     /**
-     * The render's bound, left exactly where it was, and the only one of the three that is paid
-     * again on every later call of the same conversation.
+     * 8,000, WHICH IS THE NUMBER THIS MODULE ALREADY CHOSE FOR THIS EXACT JUDGEMENT.
+     *
+     * <p>{@link Asking} shows a watcher at most 8,000 characters of a tool result, and the question
+     * there is the same as the question here: enough to see what happened, not enough to replay it.
+     * A library holding two different answers to one question is how the last one went wrong.
+     *
+     * <p>IT IS ALSO WHERE THE FIELD DATA SITS. This column carries every message that is not the
+     * system prompt, so in practice it carries the tool results, and one consumer's 180,525 of them
+     * run p50 485, p90 7,492, p99 47,820. 8,000 is just above the ninetieth percentile: nine in ten
+     * whole. The 900 that stood here was below the FORTIETH — it cut 41.4% of them, and the message
+     * that was reported cut mid-token was rendered through this bound and no other.
+     *
+     * <p>WHY THIS ONE IS STILL THE SMALLEST OF THE THREE. It is the only bound that is paid again:
+     * the outbound render re-emits every message on every later call, so this number is multiplied
+     * by the rounds of a conversation while {@link #prompt} and {@link #answer} are written once.
+     * That is the 428K-token growth this recorder was shaped against, and it is the reason this
+     * column does not simply get the backstop.
+     *
+     * <p>AND WHY RAISING IT COSTS LESS THAN THE MULTIPLICATION SUGGESTS. A bound is only paid on
+     * the messages that reach it. The median message in that corpus is 485 characters, already
+     * under the OLD bound, so this changes nothing for most of the record and everything for the
+     * tail — which is the part a reader opens the record to see.
      */
-    private static final int RENDER = 900;
+    private static final int RENDER = 8_000;
 
     public Keeping {
         atLeastOne("prompt", prompt);
