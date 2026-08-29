@@ -197,4 +197,45 @@ class ARoundEndsBetweenStagesTest {
         return Round.of(settlements, KEY, dir.resolve("expiring").resolve("owner_repo"),
                 REQUEUED);
     }
+
+    @Test
+    void aKeyWithAQuoteInItStillCountsItsOwnBoundaries(@TempDir Path dir) throws Exception {
+        // A FAST PATH THAT IS STRICTER THAN THE CHECK IT PRECEDES IS NOT AN OPTIMISATION, IT IS THE
+        // DECISION — silently, and in the one case the slow path was written for.
+        //
+        // Settlement.write stores escape(key); rowsFor pre-filtered on line.contains(key), the RAW
+        // one. A key holding a character the escaper touches therefore never matched a line holding
+        // its own row, and the exact comparison underneath — which is correct and would have found
+        // it — never got the chance.
+        //
+        // Measured before the fix: two boundaries written, round 1 instead of 3. A run whose key
+        // contains a quote never advances its round, so a sweep that resumes by round either
+        // repeats that work for ever or never picks it up. Keys are built from repository and
+        // branch names, where a quote is unusual rather than impossible.
+        Path settlements = dir.resolve("settlements.jsonl");
+        String awkward = "owner/re\"po|abc123|17|21";
+        Trace trace = new JsonlTrace(dir.resolve("trace.jsonl"), settlements, awkward);
+
+        trace.settled(awkward, Round.PAUSED, "a round boundary", true, true);
+        trace.settled(awkward, Round.PAUSED, "and another", true, true);
+
+        assertEquals(3, Round.of(settlements, awkward, dir.resolve("nostop"), "").number(),
+                "two boundaries are two boundaries whatever the key spells");
+    }
+
+    @Test
+    void aKeyThatIsAPrefixOfAnotherCountsOnlyItsOwn(@TempDir Path dir) throws Exception {
+        // The other half of the same question, on the file whose own javadoc says the whole sweep
+        // shares it. The exact comparison under the filter always handled this; the test is here so
+        // a future filter cannot quietly widen it the way happened() had.
+        Path settlements = dir.resolve("settlements.jsonl");
+        Trace shorter = new JsonlTrace(dir.resolve("t1.jsonl"), settlements, "owner/repo|abc|17|2");
+        Trace longer = new JsonlTrace(dir.resolve("t2.jsonl"), settlements, "owner/repo|abc|17|21");
+
+        longer.settled("owner/repo|abc|17|21", Round.PAUSED, "the long lane paused", true, true);
+
+        assertEquals(1, Round.of(settlements, "owner/repo|abc|17|2", dir.resolve("nostop"), "")
+                        .number(),
+                "the short lane has ended no rounds; the long lane's boundary is not its own");
+    }
 }

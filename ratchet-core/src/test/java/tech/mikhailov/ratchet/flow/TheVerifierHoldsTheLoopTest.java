@@ -140,6 +140,44 @@ class TheVerifierHoldsTheLoopTest {
                 "silence says so: " + s.notes);
     }
 
+    @Test
+    void theWorkspaceIsReadAGAINBEFOREEVERYVERDICTAndNotOnceAtTheStart() throws Exception {
+        // THE FOUNDING REQUIREMENT OF A TRIAD, AND NOTHING ASSERTED IT. Hoist `facts.read()` above
+        // the round loop and all 144 tests in ratchet-core stay green — verified by doing it.
+        //
+        // A triad exists because a doer's REPORT is not evidence: the verifier is given what the
+        // workspace says instead. Read once, that guarantee inverts after the first round. The doer
+        // fixes what round one got wrong, the verifier is handed round one's workspace, and it
+        // rejects work that is now correct — or accepts work that has since been broken. A stage
+        // then spends its whole budget arguing about a snapshot nobody is looking at any more,
+        // which is the failure mode this design was built to delete.
+        //
+        // Pinned with a workspace that CHANGES: the doer repairs it on the second round, and the
+        // verifier settles only on what it can see.
+        StringBuilder workspace = new StringBuilder("broken");
+        int[] rounds = {0};
+
+        String answer = Flow.triad("stage",
+                brief -> "the plan",
+                (plan, feedback) -> {
+                    rounds[0]++;
+                    if (rounds[0] == 2) {
+                        workspace.setLength(0);
+                        workspace.append("repaired");
+                    }
+                    return "I did round " + rounds[0];
+                },
+                judged -> judged.contains("repaired") ? "done" : "again: the workspace is broken",
+                workspace::toString,
+                Trace.quiet(), "key", 5).run("go");
+
+        assertEquals(2, rounds[0],
+                "the doer repaired the workspace on round two and the verifier could see it. Read "
+                        + "once at the start, the verifier is handed 'broken' for ever and the "
+                        + "stage burns its whole budget rejecting work that is already correct");
+        assertEquals("I did round 2", answer, "and the stage hands back what settled it");
+    }
+
     private static final class Script {
 
         record Run(String plan, String feedback) {

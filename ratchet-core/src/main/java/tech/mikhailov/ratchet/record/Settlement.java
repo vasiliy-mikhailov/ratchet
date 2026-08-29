@@ -119,8 +119,22 @@ public final class Settlement {
             return List.of();
         }
         List<Map<String, String>> rows = new ArrayList<>();
+        // THE CHEAP FILTER LOOKED FOR SOMETHING THE LINE NEVER CONTAINS. write() stores
+        // escape(key); this tested line.contains(key) — the RAW one — so a key holding a character
+        // the escaper touches never matched a line holding its own row, and the exact comparison
+        // below, which is correct and would have found it, never got the chance.
+        //
+        // Verified by running it: key `owner/re"po|abc123|17|21`, two PAUSED boundaries written,
+        // Round.of counting round 1 instead of 3. A run whose key contains a quote never sees its
+        // own round boundaries, so its round never advances — in a sweep that resumes by round,
+        // that is work repeated for ever or never picked up at all. Repository and branch names are
+        // where these keys come from, so a quote is unusual and not impossible.
+        //
+        // A fast path that is stricter than the check it precedes is not an optimisation, it is the
+        // decision — silently, and in the one case the slow path was written for.
+        String onTheLine = escape(key);
         for (String line : text.split("\n")) {
-            if (!line.contains(key)) {
+            if (!line.contains(onTheLine)) {
                 continue;
             }
             Map<String, String> row;
