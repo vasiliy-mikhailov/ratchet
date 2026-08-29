@@ -124,4 +124,42 @@ class TheRunCanReadItsOwnRecordTest {
             throw new IllegalStateException(e);
         }
     }
+
+    @Test
+    void aRunWhoseKeyIsAPrefixOfAnothersDoesNotReadThatRunsRows(@TempDir Path dir)
+            throws Exception {
+        // TWO LANES OF ONE SWEEP, ONE FILE. The last field of a key is a target count, so keys that
+        // are prefixes of each other are the ordinary shape rather than a contrived one — and the
+        // shorter one used to read both lanes back as its own history.
+        //
+        // The match was two clauses and the second undid the first: one tested the bump field with
+        // its closing quote, the other was a bare substring over the whole row. An agent asking
+        // what it had done was handed what another lane had done, in the record whose entire
+        // purpose is telling those apart.
+        Path shared = dir.resolve("trace.jsonl");
+        Trace shorter = new JsonlTrace(shared, dir.resolve("s.jsonl"), "owner/repo|abc123|17|2");
+        Trace longer = new JsonlTrace(shared, dir.resolve("s.jsonl"), "owner/repo|abc123|17|21");
+
+        shorter.applied("gate", "the short lane did this");
+        longer.applied("gate", "the long lane did this");
+
+        assertEquals("[gate] the short lane did this", shorter.happened("", "", 20).strip(),
+                "a lane reads its own rows and no others");
+        assertEquals("[gate] the long lane did this", longer.happened("", "", 20).strip(),
+                "and the longer key was never in doubt, which is why this went unnoticed");
+    }
+
+    @Test
+    void aRowThatMerelyMentionsTheKeyIsNotOneOfItsRows(@TempDir Path dir) throws Exception {
+        // The other half of the same bare substring: a tool result quoting a repository name is a
+        // row ABOUT the key, not a row BELONGING to it.
+        Path shared = dir.resolve("trace.jsonl");
+        Trace mine = new JsonlTrace(shared, dir.resolve("s.jsonl"), "owner/repo|abc123|17|2");
+        Trace theirs = new JsonlTrace(shared, dir.resolve("s.jsonl"), "somebody/else|def|1|1");
+
+        theirs.applied("gate", "cloned owner/repo|abc123|17|2 to compare against");
+
+        assertEquals("", mine.happened("", "", 20).strip(),
+                "another run's row quoting my key is not my row");
+    }
 }

@@ -49,7 +49,7 @@ public record Sampling(double temperature, int maxTokens, int thinkingTokens) {
     /** What every existing caller gets, unchanged: {@code RATCHET_THINKING_TOKENS}, and zero. */
     public static Sampling fromEnv() {
         return new Sampling(0.0, 16_000,
-                Model.attemptsFrom(Model.setting("THINKING_TOKENS", "4000")));
+                Model.setting("THINKING_TOKENS", 4000));
     }
 
     /** The shipped numbers, spelt out, and not readable from the environment. */

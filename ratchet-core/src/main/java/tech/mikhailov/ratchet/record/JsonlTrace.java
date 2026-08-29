@@ -127,8 +127,28 @@ public final class JsonlTrace implements Trace, ToolWatching {
         List<String> lines = new ArrayList<>();
         try (var rows = Files.lines(trace)) {
             for (String row : rows.toList()) {
-                if (!row.contains("\"bump\":\"" + key.replace("\"", "") + "\"")
-                        && !row.contains(escape(key))) {
+                // THE FIELD, NOT THE ROW, AND THE WHOLE VALUE, NOT A PREFIX OF IT.
+                //
+                // This was two clauses and the second undid the first. One matched the bump field
+                // with its closing quote, which is right; the other was `row.contains(escape(key))`
+                // — a bare substring over the ENTIRE row — and it matched two things it should not.
+                //
+                // A run whose key is a PREFIX of another run's read that run's rows. Verified: two
+                // lanes of one sweep appending to one file, keyed `owner/repo|abc123|17|2` and
+                // `owner/repo|abc123|17|21` — the last field is a target count, so this is the
+                // ordinary shape, not a contrived one — and the shorter key read both lanes back as
+                // its own history. An agent asking what it had done was handed what another lane
+                // had done, in a record whose whole purpose is telling those apart.
+                //
+                // And a row whose CONTENT mentioned the key matched too: a tool result quoting a
+                // repository name is a row about the key, not a row belonging to it.
+                //
+                // One rule now, and it is exactly what write() puts on disk. The first clause's
+                // `key.replace("\"", "")` was the reason the second existed at all: it stripped
+                // quotes the row does not strip, so a key containing one never matched itself and
+                // needed a fallback. escape(key) is what was written, so it matches whatever the
+                // key contains.
+                if (!row.contains("\"bump\":\"" + escape(key) + "\"")) {
                     continue;
                 }
                 String kind = value(row, "kind");

@@ -176,7 +176,7 @@ public final class Model {
 
     /** How wide the draw is, as a number rather than a draw, so a caller can pin it. */
     static int jitterSpread() {
-        return attemptsFrom(setting("JITTER_SECONDS", "60"));
+        return setting("JITTER_SECONDS", 60);
     }
 
     /** One draw in {@code [0, spread)}; a spread of zero or less means no draw at all. */
@@ -194,7 +194,7 @@ public final class Model {
      * schedule is about ten minutes at its worst — and stops the ones that hang.
      */
     static Duration budget() {
-        return Duration.ofMinutes(attemptsFrom(setting("RETRY_BUDGET_MINUTES", "30")));
+        return Duration.ofMinutes(setting("RETRY_BUDGET_MINUTES", 30));
     }
 
     /**
@@ -209,23 +209,48 @@ public final class Model {
      * without a test between them.
      */
     static int attempts() {
-        return attemptsFrom(setting("ATTEMPTS", "10"));
+        return setting("ATTEMPTS", 10);
     }
 
     /**
-     * THE PARSE, AS A PURE FUNCTION, AND IT DOES NOT THROW.
+     * THE PARSE, AS A PURE FUNCTION, IT DOES NOT THROW, AND IT FALLS BACK TO THE CALLER'S NUMBER.
      *
-     * <p>A bad value used to be a {@link NumberFormatException} raised while the class was loading,
+     * <p>A bad value used to be a {@link NumberFormatException} raised while a class was loading,
      * which surfaces as a {@code NoClassDefFoundError} somewhere unrelated and takes a whole sweep
      * down over a typo in an environment variable. A number nobody can read is a number this falls
      * back from, and the run says what it is doing by doing the documented thing.
+     *
+     * <p>IT USED TO FALL BACK TO TEN, WHATEVER IT WAS PARSING. One parser served six settings and
+     * ten is the default of exactly one of them, so an unreadable value did not do the documented
+     * thing, it did {@code ATTEMPTS}'s thing:
+     *
+     * <pre>
+     * RATCHET_CEILING_HOURS=3h        10 hours, not 3      the natural typo for a name in hours
+     * RATCHET_THINKING_TOKENS=4k      10 tokens, not 4000
+     * RATCHET_RETRY_BUDGET_MINUTES    10 minutes, not 30
+     * RATCHET_STALL_MINUTES           10 minutes, not 20
+     * RATCHET_JITTER_SECONDS          10 seconds, not 60
+     * </pre>
+     *
+     * <p>The second line is the one that ends runs. Ten thinking tokens is not a smaller budget, it
+     * is no budget: every generation is cut off mid-thought and comes back blank, which is the
+     * {@link Truncated} failure this library documents at length — arrived at silently, from a typo,
+     * with the trace reporting a model that would not answer.
+     *
+     * <p>Taking the fallback as a number makes it impossible for it to disagree with the default the
+     * caller already wrote down two arguments earlier.
      */
-    static int attemptsFrom(String said) {
+    static int numberFrom(String said, int fallback) {
         try {
             return Math.max(1, Integer.parseInt(said.trim()));
         } catch (NumberFormatException notANumber) {
-            return 10;
+            return fallback;
         }
+    }
+
+    /** One numeric setting, under its new name or either of the two it used to have. */
+    static int setting(String name, int fallback) {
+        return numberFrom(setting(name, String.valueOf(fallback)), fallback);
     }
 
     /**

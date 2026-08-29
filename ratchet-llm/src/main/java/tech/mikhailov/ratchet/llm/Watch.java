@@ -39,8 +39,8 @@ public record Watch(Duration stall, Duration ceiling) {
     /** {@code RATCHET_STALL_MINUTES} and {@code RATCHET_CEILING_HOURS}: today's behaviour exactly. */
     public static Watch fromEnv() {
         return new Watch(
-                Duration.ofMinutes(Model.attemptsFrom(Model.setting("STALL_MINUTES", "20"))),
-                Duration.ofHours(Model.attemptsFrom(Model.setting("CEILING_HOURS", "3"))));
+                Duration.ofMinutes(Model.setting("STALL_MINUTES", 20)),
+                Duration.ofHours(Model.setting("CEILING_HOURS", 3)));
     }
 
     /** The shipped numbers, spelt out, and not readable from the environment. */

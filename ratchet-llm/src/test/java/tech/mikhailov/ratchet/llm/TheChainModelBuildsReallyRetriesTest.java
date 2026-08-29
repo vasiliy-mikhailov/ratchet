@@ -73,22 +73,33 @@ class TheChainModelBuildsReallyRetriesTest {
 
     @Test
     void theDefaultIsTenAttempts() {
-        assertEquals(10, Model.attemptsFrom("10"));
+        assertEquals(10, Model.numberFrom("10", 10));
         assertEquals(10, Model.attempts(), "unset in this JVM, so the documented default is in force");
     }
 
     @Test
     void aValueNobodyCanReadFallsBackInsteadOfKillingTheProcess() {
-        assertEquals(10, Model.attemptsFrom("ten"), "a typo must not take the sweep down");
-        assertEquals(10, Model.attemptsFrom(""), "nor an empty one");
-        assertEquals(3, Model.attemptsFrom("  3  "), "and whitespace is not a typo");
+        assertEquals(10, Model.numberFrom("ten", 10), "a typo must not take the sweep down");
+
+        // AND IT FALLS BACK TO THE CALLER'S NUMBER, NOT TO TEN. One parser serves six settings and
+        // ten is the default of exactly one of them, so an unreadable value used to do ATTEMPTS's
+        // thing whatever it was parsing: CEILING_HOURS=3h became a TEN hour ceiling, and
+        // THINKING_TOKENS=4k became ten thinking tokens — which is not a smaller budget but no
+        // budget, so every generation is cut off mid-thought and comes back blank. That is the
+        // Truncated failure this library documents, arrived at from a typo, with the trace
+        // reporting a model that would not answer.
+        assertEquals(3, Model.numberFrom("3h", 3), "a ceiling named in hours falls back to ITS hours");
+        assertEquals(4000, Model.numberFrom("4k", 4000), "and a thinking budget to ITS tokens");
+        assertEquals(30, Model.numberFrom("half an hour", 30));
+        assertEquals(10, Model.numberFrom("", 10), "nor an empty one");
+        assertEquals(3, Model.numberFrom("  3  ", 10), "and whitespace is not a typo");
     }
 
     @Test
     void oneIsAValidAnswerAndMeansTheBehaviourFromBefore() {
-        assertEquals(1, Model.attemptsFrom("1"));
-        assertEquals(1, Model.attemptsFrom("0"), "and nothing below one, which would ask zero times");
-        assertEquals(1, Model.attemptsFrom("-4"));
+        assertEquals(1, Model.numberFrom("1", 10));
+        assertEquals(1, Model.numberFrom("0", 10), "and nothing below one, which would ask zero times");
+        assertEquals(1, Model.numberFrom("-4", 10));
     }
 
     @Test
