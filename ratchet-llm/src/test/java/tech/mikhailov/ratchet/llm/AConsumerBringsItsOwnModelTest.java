@@ -6,7 +6,6 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -91,7 +90,7 @@ class AConsumerBringsItsOwnModelTest {
         // because the constructor is this package's and a consumer cannot reach it; the cast is
         // this test's, so the read loop can be fed frames instead of a socket.
         Wire guarded = (Wire) Wire.to(SOMEWHERE, Sampling.deterministic(), theirOwnPatience(),
-                true, QUIET);
+                true, QUIET, steppedClock());
 
         // An ordinary answer passes through, which is the half the wrapper this replaces proved.
         assertEquals("said something", guarded.read(ended("stop", "said something")).said());
@@ -105,9 +104,9 @@ class AConsumerBringsItsOwnModelTest {
         // silent stream ends; with the shipped twenty minutes it would not, so the @Timeout is the
         // assertion for that mutation: it must go red rather than hang.
         //
-        // IT COSTS ONE TICK OF WALL CLOCK, and that is not the Watch's doing. The read loop notices
-        // silence when its own fifteen-second poll times out, so no bound below that can fire
-        // sooner — the same fifteen seconds WhatAStalledStreamHadAlreadySaidTest records paying.
+        // IT COSTS NOTHING IN WALL CLOCK NOW. It used to cost a tick, because the read loop only
+        // noticed silence when its own poll timed out; the clock is handed in through the same door
+        // as the Watch, so a two-minute bound is reached in a few passes of a fake one.
         IllegalStateException silent = assertThrows(IllegalStateException.class,
                 () -> guarded.read(saysNothingEver()));
         assertTrue(silent.getMessage().contains("not producing"), silent.getMessage());
@@ -115,7 +114,8 @@ class AConsumerBringsItsOwnModelTest {
 
     @Test
     void aConsumerCanRefuseTheTruncationItselfBecauseTheTypeIsPublic() {
-        Wire guarded = new Wire(SOMEWHERE, Sampling.deterministic(), theirOwnPatience(), true, QUIET);
+        Wire guarded = new Wire(SOMEWHERE, Sampling.deterministic(), theirOwnPatience(), true,
+                QUIET, steppedClock());
 
         Truncated cut = assertThrows(Truncated.class,
                 () -> guarded.read(ended("length", "")));
@@ -220,12 +220,29 @@ class AConsumerBringsItsOwnModelTest {
      * is a bound the door could quietly drop. Milliseconds are only sayable at all because
      * {@link Watch} is a value now and not a constant parsed at class load.
      */
+    /**
+     * A CONSUMER'S OWN BOUND, AND A REAL ONE.
+     *
+     * <p>This was one millisecond, which was never a requirement — it was the only way to provoke a
+     * silence guard while the clock was the system's. Once the stall began being consulted on every
+     * pass rather than only on a poll timeout, a one-millisecond bound started firing before the
+     * first frame was scheduled: this test failed about one full run in four with "no token for 0s",
+     * which is a bound reporting that no time had passed and it had given up anyway.
+     *
+     * <p>Two minutes is a bound a consumer would actually set, and {@link Now} makes it assertable.
+     */
     private static Watch theirOwnPatience() {
-        return new Watch(Duration.ofMillis(1), Duration.ofMinutes(30));
+        return new Watch(Duration.ofMinutes(2), Duration.ofMinutes(30));
     }
 
-    /** Counted down by nothing, which is the point. */
-    private static final CountDownLatch SILENT = new CountDownLatch(1);
+    /**
+     * Sized against the loop, which reads the clock twice a pass and three times when a data frame
+     * moves the last-token mark. Fifteen seconds keeps a producing lane well inside the two-minute
+     * bound and still crosses it in a few passes of silence.
+     */
+    private static Now steppedClock() {
+        return Now.steppingBy(Duration.ofSeconds(15));
+    }
 
     /**
      * A connection that is open and has stopped producing.
@@ -235,16 +252,20 @@ class AConsumerBringsItsOwnModelTest {
      * own daemon reader, so a stream abandoned mid-stall holds up neither the next test nor the
      * JVM's exit.
      */
+    /**
+     * SILENCE AS A CONNECTION ACTUALLY SENDS IT: keep-alives, not a parked thread.
+     *
+     * <p>This blocked on a latch, which modelled a socket that has DIED. A live connection with
+     * nothing to say sends frame separators and comment frames so it stays open, and every proxy in
+     * the path may add them — which is silence to the guard and traffic to the socket, because the
+     * loop skips them without touching the last-token mark.
+     *
+     * <p>Blocking also made the loop wait a real tick to notice, so this test cost a quarter of the
+     * stall bound in wall clock and timed out entirely once the bound became a realistic two
+     * minutes. Nothing waits now.
+     */
     private static Stream<String> saysNothingEver() {
-        return Stream.generate(() -> {
-            try {
-                SILENT.await();
-                return "";
-            } catch (InterruptedException stopping) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("the silent stream was interrupted", stopping);
-            }
-        });
+        return Stream.generate(() -> "");
     }
 
     /**
