@@ -224,18 +224,26 @@ public final class Wire implements Chat {
                     watching.flush();
                     throw broken;
                 }
+                // THE CEILING IS CHECKED ON EVERY PASS AND THE STALL ONLY ON SILENCE, because
+                // they ask opposite questions. This code had both of them inside the branch below,
+                // which is entered only when the poll TIMES OUT — so the ceiling could fire only on
+                // a stream that had gone quiet, and GaveUp's whole reason for existing, in its own
+                // javadoc, is that "it fires on a stream that IS producing and has been for hours".
+                // The one case it is for was the one case it could not see: at the shipped tick of
+                // fifteen seconds, a runaway generation emitting a token a second ran past the
+                // three-hour ceiling untouched, holding the lane the ceiling exists to reclaim.
+                if (System.currentTimeMillis() > deadline) {
+                    keep(watching, finish, "still streaming after " + said(watch.ceiling()));
+                    throw new GaveUp("still streaming after " + said(watch.ceiling())
+                            + "; giving the lane back");
+                }
                 if (next == null) {
                     long quiet = System.currentTimeMillis() - lastToken;
                     if (quiet > watch.stall().toMillis()) {
-                        keep(watching, finish, "no token for " + (quiet / 60_000) + " minutes");
-                        throw new IllegalStateException("no token for " + (quiet / 60_000)
-                                + " minutes: the connection is not producing");
-                    }
-                    if (System.currentTimeMillis() > deadline) {
-                        keep(watching, finish, "still streaming after "
-                                + watch.ceiling().toHours() + "h");
-                        throw new GaveUp("still streaming after " + watch.ceiling().toHours()
-                                + "h; giving the lane back");
+                        String how = said(Duration.ofMillis(quiet));
+                        keep(watching, finish, "no token for " + how);
+                        throw new IllegalStateException("no token for " + how
+                                + ": the connection is not producing");
                     }
                     continue;
                 }
@@ -298,6 +306,24 @@ public final class Wire implements Chat {
         List<Called> asked = new ArrayList<>();
         calls.values().forEach(c -> asked.add(c.done()));
         return new Reply(said.toString(), reasoning.toString(), asked, ending, spend);
+    }
+
+    /**
+     * A DURATION IN A UNIT THAT SURVIVES BEING SMALL.
+     *
+     * <p>These were {@code millis / 60_000} minutes and {@code ceiling.toHours()} hours, which is
+     * fine for the shipped twenty minutes and three hours and wrong for everything ratchet#7 made
+     * possible: since {@link Watch} became a per-call value, a consumer with a two-minute patience
+     * was told "no token for 0 minutes" and a sub-hour ceiling reported "still streaming after 0h".
+     * A bound that reports itself as zero reads as a bug in the guard rather than a fact about the
+     * connection.
+     */
+    private static String said(Duration d) {
+        long seconds = d.toSeconds();
+        if (seconds < 90) {
+            return seconds + "s";
+        }
+        return d.toMinutes() < 90 ? d.toMinutes() + "m" : d.toHours() + "h";
     }
 
     private void keep(Reasoning watching, String finish, String why) {
