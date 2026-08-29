@@ -4,8 +4,8 @@ import java.time.Duration;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -14,96 +14,122 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>{@link GaveUp}'s javadoc states the case it exists for: <em>"it fires on a stream that IS
  * producing and has been for hours, and the whole point of it is to give the slot back"</em>. That
- * was the one case the code could not detect.
+ * was the one case the code could not detect. Both guards lived inside the branch taken when
+ * {@code lines.poll(tick)} TIMES OUT — right for the stall, since silence is what a timeout means,
+ * and exactly backwards for the ceiling: a stream delivering a line every tick never times out, so
+ * the deadline was never consulted. At the shipped fifteen-second tick, a runaway emitting a token
+ * a second ran past three hours untouched, holding the lane the ceiling exists to reclaim.
  *
- * <p>Both guards lived inside the branch taken when {@code lines.poll(tick)} TIMES OUT. For the
- * stall that is right — silence is what a timeout means. For the ceiling it is exactly backwards: a
- * stream delivering a line at least once per tick never times out, so the deadline was never
- * consulted. At the shipped tick of fifteen seconds, a runaway generation emitting a token a second
- * ran past the three-hour ceiling untouched, holding the lane the ceiling exists to reclaim.
+ * <p>THE MUTATION REPORT SAID SO WITHOUT BEING ASKED: every mutant on those two lines came back
+ * NO_COVERAGE — not survived, not equivalent, never executed by any test in the module.
  *
- * <p>THE MUTATION REPORT SAID SO WITHOUT BEING ASKED. Every mutant on the ceiling's two lines came
- * back NO_COVERAGE — not survived, not equivalent, but never executed by any test in the module.
- * Code that no test can reach is the shape a dead branch has, and this one was dead for the reason
- * that mattered rather than by accident.
+ * <p>THIS FILE ASSERTS THE SHIPPED THREE HOURS, WHICH IT COULD NOT DO BEFORE. Its first version ran
+ * against a 700-millisecond ceiling and a stream sleeping 40ms a frame, with a {@code @Timeout} on
+ * every method because the failure mode was a hang. That bound was chosen for the patience of
+ * whoever runs the suite and described nothing. {@link Wire} takes a {@link Now} now, so the
+ * requirement can be stated as the requirement: three hours, no sleeps, no latch, no timeout.
  *
- * <p>The two guards ask opposite questions and now sit in opposite places: the ceiling on every
- * pass, the stall only on silence.
+ * <p>THE CLOCK STEPS PER READ AND THE LOOP READS IT TWICE A PASS — three times when a data frame
+ * updates the last-token mark. That is the unit these fixtures are sized against, and getting it
+ * wrong cost two attempts: {@code steppingBy(1 hour)} made a stream sending a frame an hour look
+ * like one sending a frame every three, so the stall fired where the ceiling was being tested. The
+ * alternative — advancing the clock as the fixture yields — is worse, because the body is drained
+ * by its own thread as fast as it will go, so an unbounded stream races the clock past every bound
+ * before the loop has looked once.
+ *
+ * <p>Five minutes a read keeps a producing lane's silence near ten minutes, comfortably inside the
+ * shipped twenty, while three hours still arrives in a dozen passes.
  */
 class TheCeilingEndsALaneThatIsStillProducingTest {
 
+    /** What ships: twenty minutes of silence allowed, three hours of anything at all. */
+    private static final Watch SHIPPED = Watch.shipped();
+
     @Test
-    @Timeout(20)
-    void aStreamThatNeverStopsProducingIsStillEndedByTheCeiling() {
-        // A frame every 40ms against a 200ms stall and a 700ms ceiling. Watch refuses a ceiling
-        // shorter than its stall — "or the ceiling is the only guard that ever fires" — so the
-        // stall has to stay the shorter of the two, and the stream has to out-talk it. At 40ms it
-        // does: never silent for 200ms, so the stall cannot fire and only the ceiling can end this.
-        // Under the old code nothing could, which is the point.
-        Wire wire = new Wire(Endpoint.of("http://test/v1", "m"), Sampling.deterministic(),
-                new Watch(Duration.ofMillis(200), Duration.ofMillis(700)), true, null);
+    void aStreamThatNeverStopsProducingIsStillEndedAtTheCeiling() {
+        // Tokens arriving throughout, silence never near twenty minutes, and the lane still ends —
+        // which under the old code it could not, because the ceiling was only consulted when the
+        // poll timed out and this stream never lets it.
+        Wire wire = wire(SHIPPED, Now.steppingBy(Duration.ofMinutes(5)));
 
-        GaveUp gave = assertThrows(GaveUp.class, () -> wire.read(chatty()));
+        GaveUp gave = assertThrows(GaveUp.class, () -> wire.read(tokensForever()));
 
-        assertTrue(gave.getMessage().contains("still streaming"),
-                "the lane was producing throughout and the ceiling is what ends it: "
-                        + gave.getMessage());
+        assertTrue(gave.getMessage().contains("3h"),
+                "the shipped three-hour ceiling, stated as three hours: " + gave.getMessage());
     }
 
     @Test
-    @Timeout(20)
-    void theBoundIsReportedInAUnitThatSurvivesBeingSmall() {
-        // Since Watch became a per-call value (ratchet#7), a consumer may set a patience of
-        // minutes. The message rendered `ceiling.toHours()`, so anything under an hour announced
-        // itself as "still streaming after 0h" — which reads as a broken guard rather than a fact.
-        Wire wire = new Wire(Endpoint.of("http://test/v1", "m"), Sampling.deterministic(),
-                new Watch(Duration.ofMillis(200), Duration.ofMillis(700)), true, null);
+    void aLaneUnderTheCeilingIsLeftAlone() {
+        // THE OTHER SIDE OF THE BOUND, which the old test could not express. A guard that fires
+        // early is worse than one that fires late: it kills work that was going to succeed.
+        Wire wire = wire(SHIPPED, Now.steppingBy(Duration.ofMinutes(5)));
 
-        GaveUp gave = assertThrows(GaveUp.class, () -> wire.read(chatty()));
+        Reply reply = wire.read(saysThenEnds());
 
-        assertTrue(!gave.getMessage().contains("0h") && !gave.getMessage().contains("0 minutes"),
-                "a bound that reports itself as zero is not a report: " + gave.getMessage());
+        assertEquals("an answer", reply.said(), "well inside both bounds, this call was fine");
     }
 
     @Test
-    @Timeout(20)
-    void aSilentStreamIsStillTheStallAndNotTheCeiling() {
-        // THE OTHER HALF, so a fix cannot swap them. Silence must be reported as silence: the
-        // reader's next move differs completely between a dead socket and a lane that has run long.
-        Wire wire = new Wire(Endpoint.of("http://test/v1", "m"), Sampling.deterministic(),
-                new Watch(Duration.ofMillis(200), Duration.ofSeconds(30)), true, null);
+    void aConnectionSendingKeepAlivesButNoTokensStillStalls() {
+        // THE STALL MEASURES TOKENS AND USED TO MEASURE LINES. It lived in the poll-timeout branch,
+        // so a connection that kept ARRIVING never stalled however long it went without producing.
+        // That is what an SSE keep-alive is: blank separators and comment frames exist so an idle
+        // connection stays open, and any proxy in the path may add them. Such a stream ran to the
+        // three-hour ceiling instead of stopping at twenty minutes — the ceiling doing the stall's
+        // job nine times slower.
+        Wire wire = wire(SHIPPED, Now.steppingBy(Duration.ofMinutes(5)));
 
         IllegalStateException stalled = assertThrows(IllegalStateException.class,
-                () -> wire.read(silent()));
+                () -> wire.read(keepAlivesForever()));
 
         assertTrue(stalled.getMessage().contains("not producing"),
-                "nothing arrived, so this is a stall: " + stalled.getMessage());
-        assertTrue(!(stalled instanceof GaveUp), "and not the ceiling: " + stalled);
+                "lines were arriving and tokens were not, which is a stall: "
+                        + stalled.getMessage());
+        assertTrue(!(stalled instanceof GaveUp),
+                "and not the ceiling, three hours later: " + stalled);
     }
 
-    /** A stream that keeps talking for ever: never silent, so only a ceiling can end it. */
-    private static Stream<String> chatty() {
-        return Stream.generate(() -> {
-            park(40);
-            return "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"},"
-                    + "\"finish_reason\":null}]}";
-        });
+    @Test
+    void theBoundIsReportedInAUnitThatSurvivesBeingSmall() {
+        // Since Watch became a per-call value a consumer may set minutes, and the message rendered
+        // ceiling.toHours() — so anything under an hour announced itself as "after 0h", which reads
+        // as a broken guard rather than a fact about the connection.
+        Wire wire = wire(new Watch(Duration.ofMinutes(4), Duration.ofMinutes(5)),
+                Now.steppingBy(Duration.ofMinutes(1)));
+
+        GaveUp gave = assertThrows(GaveUp.class, () -> wire.read(tokensForever()));
+
+        assertTrue(gave.getMessage().contains("5m"),
+                "a five-minute ceiling says five minutes: " + gave.getMessage());
     }
 
-    /** A stream that never yields anything and never ends. */
-    private static Stream<String> silent() {
-        return Stream.generate(() -> {
-            park(50);
-            return "";
-        });
+    private static Wire wire(Watch watch, Now now) {
+        return new Wire(Endpoint.of("http://test/v1", "a-model"), Sampling.deterministic(),
+                watch, true, null, now);
     }
 
-    private static void park(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException stopping) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(stopping);
-        }
+    /** Tokens for ever: never silent, so only a ceiling can end it. */
+    private static Stream<String> tokensForever() {
+        return Stream.generate(() -> "data: {\"choices\":[{\"index\":0,"
+                + "\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}");
+    }
+
+    /**
+     * Lines that are not tokens, for ever — an SSE keep-alive.
+     *
+     * <p>A blank line is the frame separator. The loop skips it without touching the last-token
+     * mark, which is what makes it silence to the guard and traffic to the socket.
+     */
+    private static Stream<String> keepAlivesForever() {
+        return Stream.generate(() -> "");
+    }
+
+    /** One short, ordinary, successful response. */
+    private static Stream<String> saysThenEnds() {
+        return Stream.of(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"an answer\"},"
+                        + "\"finish_reason\":null}]}",
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}",
+                "data: [DONE]");
     }
 }

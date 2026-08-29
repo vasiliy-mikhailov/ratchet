@@ -81,18 +81,56 @@ public final class Wire implements Chat {
     private final Listening listening;
     private final HttpClient http;
 
+    /**
+     * THE CLOCK, HANDED IN, because the two guards in this class are ENTIRELY about time and were
+     * the only things in the library that took their own.
+     *
+     * <p>{@link Retrying} has taken a {@link Now} since 0.8.0, and the difference shows in what its
+     * tests can say: the whole ten-attempt schedule — eighty-eight seconds of waiting — is asserted
+     * in 47 milliseconds. The stall and the ceiling could only be reached by genuinely waiting, so
+     * their tests grew sleeps, a latch nobody counts down, and a {@code @Timeout} on every method
+     * because the failure mode was a hang rather than an assertion. One of them took 1.6 seconds to
+     * assert a single comparison.
+     *
+     * <p>Worse than slow, they had to LIE ABOUT THE REQUIREMENT. A test for a three-hour ceiling
+     * cannot wait three hours, so it asserted a 700-millisecond one — a bound chosen for the
+     * patience of whoever runs the suite rather than to describe anything. With the clock handed in
+     * the test says three hours, because it can.
+     */
+    private final Now now;
+
     /** Everything from the environment, which is what {@link Model} hands most callers. */
     public static Chat to(Endpoint endpoint) {
-        return new Wire(endpoint, Sampling.fromEnv(), Watch.fromEnv(), true, null);
+        return new Wire(endpoint, Sampling.fromEnv(), Watch.fromEnv(), true, null, Now.SYSTEM);
     }
 
     /** Everything chosen. Nothing here reads the environment. */
     public static Chat to(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking,
                           Trace trace) {
-        return new Wire(endpoint, sampling, watch, thinking, trace);
+        return new Wire(endpoint, sampling, watch, thinking, trace, Now.SYSTEM);
+    }
+
+    /**
+     * THE SAME, WITH THE CLOCK CHOSEN — and public, which is the whole point of it existing.
+     *
+     * <p>Six times in this library a value was made injectable for its own tests and left
+     * unreachable from outside, and every one of those was reported by a consumer rather than found
+     * here. A clock that only this package could hand in would be the seventh, and it would be the
+     * worst of them: {@link Retrying} already takes one, so a consumer wrapping their own client
+     * can pin the retry's schedule and not the liveness bounds underneath it.
+     */
+    public static Chat to(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking,
+                          Trace trace, Now now) {
+        return new Wire(endpoint, sampling, watch, thinking, trace, now);
     }
 
     Wire(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking, Trace trace) {
+        this(endpoint, sampling, watch, thinking, trace, Now.SYSTEM);
+    }
+
+    Wire(Endpoint endpoint, Sampling sampling, Watch watch, boolean thinking, Trace trace,
+         Now now) {
+        this.now = now;
         this.endpoint = endpoint;
         this.sampling = sampling;
         this.watch = watch;
@@ -120,19 +158,19 @@ public final class Wire implements Chat {
 
     @Override
     public Reply answer(Ask ask) {
-        long began = System.currentTimeMillis();
+        long began = now.millis();
         if (listening != null) {
             listening.sending(ask);
         }
         try {
             Reply reply = call(ask);
             if (listening != null) {
-                listening.back(ask, reply, System.currentTimeMillis() - began);
+                listening.back(ask, reply, now.millis() - began);
             }
             return reply;
         } catch (RuntimeException failed) {
             if (listening != null) {
-                listening.failed(ask, failed, System.currentTimeMillis() - began);
+                listening.failed(ask, failed, now.millis() - began);
             }
             throw failed;
         }
@@ -205,8 +243,8 @@ public final class Wire implements Chat {
         String finish = "";
         Spend spend = Spend.NONE;
 
-        long lastToken = System.currentTimeMillis();
-        long deadline = System.currentTimeMillis() + watch.ceiling().toMillis();
+        long lastToken = now.millis();
+        long deadline = now.millis() + watch.ceiling().toMillis();
         try {
             while (true) {
                 Object next;
@@ -232,19 +270,30 @@ public final class Wire implements Chat {
                 // The one case it is for was the one case it could not see: at the shipped tick of
                 // fifteen seconds, a runaway generation emitting a token a second ran past the
                 // three-hour ceiling untouched, holding the lane the ceiling exists to reclaim.
-                if (System.currentTimeMillis() > deadline) {
+                if (now.millis() > deadline) {
                     keep(watching, finish, "still streaming after " + said(watch.ceiling()));
                     throw new GaveUp("still streaming after " + said(watch.ceiling())
                             + "; giving the lane back");
                 }
+                // TIME SINCE THE LAST TOKEN, WHICH IS WHAT THIS CLASS SAYS IT MEASURES AND WAS
+                // NOT. This lived inside the branch below, entered only when the poll TIMES OUT, so
+                // it was really time since the last LINE. A connection sending lines that are not
+                // tokens therefore never stalled — and that is not a hypothetical shape, it is what
+                // a keep-alive is: SSE comment frames and blank separators exist precisely so an
+                // idle connection keeps arriving, and every proxy in the path may add them. Such a
+                // stream ran to the three-hour ceiling instead of stopping at twenty minutes, which
+                // is the ceiling doing the stall's job nine times slower.
+                //
+                // `lastToken` moves only on a data frame, so a stream that is genuinely producing
+                // still never trips this.
+                long quiet = now.millis() - lastToken;
+                if (quiet > watch.stall().toMillis()) {
+                    String how = said(Duration.ofMillis(quiet));
+                    keep(watching, finish, "no token for " + how);
+                    throw new IllegalStateException("no token for " + how
+                            + ": the connection is not producing");
+                }
                 if (next == null) {
-                    long quiet = System.currentTimeMillis() - lastToken;
-                    if (quiet > watch.stall().toMillis()) {
-                        String how = said(Duration.ofMillis(quiet));
-                        keep(watching, finish, "no token for " + how);
-                        throw new IllegalStateException("no token for " + how
-                                + ": the connection is not producing");
-                    }
                     continue;
                 }
 
@@ -254,7 +303,7 @@ public final class Wire implements Chat {
                     // them and this endpoint sends the blanks.
                     continue;
                 }
-                lastToken = System.currentTimeMillis();
+                lastToken = now.millis();
                 String data = line.substring(5).strip();
                 if (data.isEmpty() || data.equals("[DONE]")) {
                     continue;

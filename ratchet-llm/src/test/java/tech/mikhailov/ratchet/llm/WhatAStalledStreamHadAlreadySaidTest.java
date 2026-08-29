@@ -3,8 +3,6 @@ package tech.mikhailov.ratchet.llm;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -42,6 +40,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WhatAStalledStreamHadAlreadySaidTest {
 
     @Test
+    // KEPT, AND THE ONLY ONE IN THE FILE. A guard that stops firing does not fail a test here, it
+    // hangs one: the stream is infinite by construction. With the clock handed in the loop no
+    // longer waits on real time, so the hang would be a spin rather than a sleep — faster to notice
+    // and no less fatal to a build without this.
     @Timeout(60)
     void aStalledStreamPutsWhatItSaidIntoTheRecordBeforeThrowing() {
         Notes notes = new Notes();
@@ -53,12 +55,11 @@ class WhatAStalledStreamHadAlreadySaidTest {
         // thinking turned off recorded nothing at all — the very loss ratchet#7 reported, rebuilt
         // one layer down after the wrapper it reported against was deleted. It holds now, and
         // aStallInAGenerationThatOnlyAnsweredIsStillRecorded is where it is pinned.
-        Wire guarded = client(notes, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
+        Wire guarded = client(notes, Watch.shipped(), Now.steppingBy(Duration.ofMinutes(5)));
 
-        // IT STILL COSTS ONE TICK OF WALL CLOCK, and that is not the Watch's doing. The loop notices
-        // silence when its poll times out, and that poll is the loop's own fifteen-second heartbeat,
-        // so no bound below it can fire sooner. The @Timeout is here for the regression: a guard
-        // that stops firing must fail this build rather than hang it, because a stream with nothing
+        // IT NO LONGER COSTS A TICK OF WALL CLOCK. The loop used to notice silence only when its
+        // poll timed out — the fifteen-second heartbeat — so no bound below it could fire sooner and
+        // every test here paid that. Silence is keep-alive frames now, which arrive, so the guard
         // behind it never ends on its own.
         IllegalStateException stalled = assertThrows(IllegalStateException.class,
                 () -> guarded.read(saysThenStalls("The First Consul", "Let me think about ",
@@ -130,7 +131,6 @@ class WhatAStalledStreamHadAlreadySaidTest {
     }
 
     @Test
-    @Timeout(60)
     void aTraceThatThrowsDoesNotSwallowTheFailureUnderneath() {
         // Recording must not break the call it is recording — but it must not hide it either.
         Trace broken = new Notes() {
@@ -139,7 +139,7 @@ class WhatAStalledStreamHadAlreadySaidTest {
                 throw new IllegalStateException("the record is unwritable");
             }
         };
-        Wire guarded = client(broken, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
+        Wire guarded = client(broken, Watch.shipped(), Now.steppingBy(Duration.ofMinutes(5)));
 
         IllegalStateException stalled = assertThrows(IllegalStateException.class,
                 () -> guarded.read(saysThenStalls("", "half a thought")));
@@ -151,7 +151,6 @@ class WhatAStalledStreamHadAlreadySaidTest {
     // ---------------------------------------------------------------- the fakes
 
     @Test
-    @Timeout(60)
     void aStallInAGenerationThatOnlyAnsweredIsStillRecorded() {
         // THE HALF THIS FILE USED TO CONCEDE IT COULD NOT PROVE, in the comment three tests above.
         // The accumulator wrote its row off the THINKING buffer, so a generation that produced
@@ -161,7 +160,7 @@ class WhatAStalledStreamHadAlreadySaidTest {
         // at 0 of 10 runaway against a 62.5% control — so the call most likely to be running when a
         // lane wedges was the one call that left no evidence behind.
         Notes notes = new Notes();
-        Wire guarded = client(notes, new Watch(Duration.ofMillis(1), Duration.ofMinutes(5)));
+        Wire guarded = client(notes, Watch.shipped(), Now.steppingBy(Duration.ofMinutes(5)));
 
         assertThrows(IllegalStateException.class,
                 () -> guarded.read(saysThenStalls("a partial answer that was going somewhere")));
@@ -180,8 +179,20 @@ class WhatAStalledStreamHadAlreadySaidTest {
      * twenty minutes, and without a server that would have to agree to stop talking.
      */
     private static Wire client(Trace trace, Watch watch) {
+        return client(trace, watch, Now.SYSTEM);
+    }
+
+    /**
+     * THE CLOCK IS HANDED IN, WHICH IS WHY THESE TESTS CAN ASSERT THE SHIPPED BOUND.
+     *
+     * <p>They used to pass a one-millisecond stall and block the body on a latch, because the only
+     * way to provoke a real twenty-minute guard was to wait twenty minutes. A one-millisecond bound
+     * describes nothing — and once the stall began being checked on every pass rather than only on
+     * a poll timeout, it stopped even working: it fired before the first frame was read.
+     */
+    private static Wire client(Trace trace, Watch watch, Now now) {
         return new Wire(Endpoint.of("http://localhost:1", "a-model"), Sampling.deterministic(),
-                watch, true, trace);
+                watch, true, trace, now);
     }
 
     /**
@@ -210,8 +221,13 @@ class WhatAStalledStreamHadAlreadySaidTest {
                     + "\"},\"finish_reason\":null}]}");
             frames.add("");
         }
-        // and nothing more, ever
-        return Stream.concat(frames.stream(), Stream.generate(NOTHING));
+        // AND THEN KEEP-ALIVES FOR EVER, which is what an idle SSE connection actually sends and
+        // what this fixture used to model by BLOCKING a thread on a latch nobody counts down.
+        // Blocking made the loop wait a real tick to notice — fifteen seconds of wall clock per
+        // test — and it modelled a socket that has died rather than one that has gone quiet. A
+        // blank line is the frame separator: the loop skips it without touching the last-token
+        // mark, so it is silence to the guard and traffic to the socket, and nothing has to wait.
+        return Stream.concat(frames.stream(), Stream.generate(() -> ""));
     }
 
     /**
@@ -231,23 +247,6 @@ class WhatAStalledStreamHadAlreadySaidTest {
                 "",
                 "data: [DONE]");
     }
-
-    /** Counted down by nothing, which is the point. */
-    private static final CountDownLatch SILENT = new CountDownLatch(1);
-
-    /**
-     * The line that never arrives. The reader waiting on it is {@link Wire}'s own daemon thread, so
-     * a lane abandoned mid-stall holds up neither the next test nor the JVM's exit.
-     */
-    private static final Supplier<String> NOTHING = () -> {
-        try {
-            SILENT.await();
-            return "";
-        } catch (InterruptedException stopping) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("the silent stream was interrupted", stopping);
-        }
-    };
 
     private static class Notes implements Trace {
         final List<String> thoughts = new ArrayList<>();
