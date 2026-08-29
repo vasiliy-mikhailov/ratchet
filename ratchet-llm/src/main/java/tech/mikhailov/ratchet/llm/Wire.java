@@ -135,8 +135,12 @@ public final class Wire implements Chat {
         this.sampling = sampling;
         this.watch = watch;
         this.thinking = thinking;
-        this.trace = trace;
-        this.listening = trace == null ? null : new Listening(trace);
+        // COERCED ONCE HERE, NOT CHECKED AT EVERY USE. Trace.quiet() was added to ratchet-core
+        // because three classes guarded against a null trace in three different ways, and this was
+        // one of them — a null listener, then a null check at each of its three call sites. Four
+        // lines that can only ever be wrong, for the one caller that passes no trace.
+        this.trace = trace == null ? Trace.quiet() : trace;
+        this.listening = new Listening(this.trace);
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
                 .version(endpoint.secure() ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1)
@@ -159,19 +163,13 @@ public final class Wire implements Chat {
     @Override
     public Reply answer(Ask ask) {
         long began = now.millis();
-        if (listening != null) {
-            listening.sending(ask);
-        }
+        listening.sending(ask);
         try {
             Reply reply = call(ask);
-            if (listening != null) {
-                listening.back(ask, reply, now.millis() - began);
-            }
+            listening.back(ask, reply, now.millis() - began);
             return reply;
         } catch (RuntimeException failed) {
-            if (listening != null) {
-                listening.failed(ask, failed, now.millis() - began);
-            }
+            listening.failed(ask, failed, now.millis() - began);
             throw failed;
         }
     }

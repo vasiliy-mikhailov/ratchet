@@ -83,8 +83,9 @@ public final class Reasoning {
      */
     private boolean abandoned;
 
+    /** A null trace is taken as {@link Trace#quiet()} here so nothing below has to ask again. */
     public Reasoning(Trace trace) {
-        this.trace = trace;
+        this.trace = trace == null ? Trace.quiet() : trace;
     }
 
     /** More reasoning. May throw {@link LoopDetected}, which ends the stream on purpose. */
@@ -144,7 +145,7 @@ public final class Reasoning {
      * with no row at all is an empty nobody can diagnose.
      */
     public void flush() {
-        if (written || trace == null) {
+        if (written) {
             return;
         }
         written = true;

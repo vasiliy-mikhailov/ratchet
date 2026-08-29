@@ -184,7 +184,7 @@ public final class Retrying implements Chat {
         this.pause = pause;
         this.retryable = retryable;
         this.now = now;
-        this.trace = trace;
+        this.trace = trace == null ? Trace.quiet() : trace;
     }
 
     @Override
@@ -244,9 +244,6 @@ public final class Retrying implements Chat {
 
     private static void say(Trace trace, int attempts, int attempt, String next,
                             RuntimeException failed) {
-        if (trace == null) {
-            return;
-        }
         try {
             trace.progress("", "model call failed on attempt " + attempt + " of " + attempts
                     + " (" + failed.getMessage() + "); " + next);
