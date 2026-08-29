@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * JUST ENOUGH JSON HAS TO ACTUALLY BE ENOUGH, because everything this library writes down and
@@ -102,6 +103,20 @@ class JustEnoughJsonHasToBeEnoughTest {
         assertEquals(1, written.lines().count(), "whatever it contained, it is one line");
         assertEquals(body, Json.read(written, "body"),
                 "what this file wrote, this file reads back, character for character");
+
+        // A ROUND TRIP CANNOT SEE AN ESCAPING FAILURE THE READER UNDOES, and this test could not.
+        // Stop Settlement.escape escaping control characters and everything above still passes: the
+        // raw 0x07 goes into the row, comes straight back out, and BEL is not a line terminator so
+        // the count stays 1. The mutation run says so out loud -- Settlement.java:153, the
+        // `c < 0x20` guard, replaced with false: SURVIVED.
+        //
+        // The row is read by other processes and by tools that are not this reader, so what matters
+        // is the BYTES, not the symmetry. Asserted on the written text, which no reader can undo.
+        assertTrue(written.chars().noneMatch(c -> c < 0x20),
+                "no raw control character may reach a row that another process has to parse: "
+                        + written.chars().filter(c -> c < 0x20).count() + " got through");
+        assertTrue(written.contains("\\u0007"),
+                "and a control character is written as its escape rather than dropped: " + written);
     }
 
     @Test
