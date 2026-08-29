@@ -112,6 +112,67 @@ public interface Trace {
      * reads twice is a transposition waiting to happen: swap them and every infrastructure failure
      * in the corpus records as a passing build, silently, with no compiler to say so.
      */
+    /**
+     * A TRACE THAT KEEPS NOTHING, so that "not recording" is a value rather than a null.
+     *
+     * <p>THREE PLACES IN THIS LIBRARY GUARDED AGAINST A NULL TRACE and did it three different
+     * ways — {@code Retrying} returned early, {@code Wire} refused to build a listener, {@code
+     * Reasoning} folded the check into an unrelated condition. Every one of those is the same
+     * decision written again, and each is a line that can only ever be wrong: a fourth caller that
+     * forgets it gets a NullPointerException from inside a recording path, which is the one place
+     * this project has said repeatedly must never break the run it is recording.
+     *
+     * <p>FOURTEEN TEST FILES ALSO IMPLEMENTED THIS INTERFACE by hand, at nine empty methods each,
+     * to say the one thing this constant says. That is around 560 lines whose entire content is
+     * "no thank you".
+     *
+     * <p>IT IS NOT A NULL OBJECT SMUGGLED IN AS A DEFAULT. Nothing here makes it the default trace,
+     * and it must not become one: a run whose record is empty because somebody forgot to pass a
+     * real trace looks exactly like a run that had nothing to say, and telling those apart is what
+     * the record is for. This is for a caller who has decided, and for a test that is asserting
+     * something else.
+     */
+    static Trace quiet() {
+        return new Trace() {
+            @Override
+            public void asked(String agent, String prompt, String reply) {
+            }
+
+            @Override
+            public void applied(String stage, String what) {
+            }
+
+            @Override
+            public void tool(String agent, String tool, String arguments, String result) {
+            }
+
+            @Override
+            public void thought(String finishReason, String thinking, String content) {
+            }
+
+            @Override
+            public void built(String phase, Outcome result) {
+            }
+
+            @Override
+            public void settled(String key, String state, String because, boolean beforeOk,
+                                boolean afterOk) {
+            }
+
+            @Override
+            public void failed(String key, Throwable cause) {
+            }
+
+            @Override
+            public void progress(String key, String note) {
+            }
+
+            @Override
+            public void priced(String key, String minutes, String itemisation) {
+            }
+        };
+    }
+
     record Outcome(boolean infra, boolean passed, String summary) {
     }
 

@@ -113,15 +113,9 @@ class TheRunCanReadItsOwnRecordTest {
                 "file reads fill what is left over, they do not take the budget: " + log);
     }
 
-    @Test
-    void anIntegerArgumentIsReadableAtAll() {
-        // read() stops at anything not opening with a quote, so a JSON integer read as absent and
-        // every call of the tool that asked for one used the default instead of the stated limit.
-        assertEquals(50, Json.number("{\"limit\": 50}", "limit", 80));
-        assertEquals(50, Json.number("{\"limit\":\"50\"}", "limit", 80), "quoted works too");
-        assertEquals(80, Json.number("{\"stage\":\"migrate\"}", "limit", 80), "absent falls back");
-        assertEquals(80, Json.number("{\"limit\":\"lots\"}", "limit", 80), "so does nonsense");
-    }
+    // The integer-argument requirement that used to sit here is Json's rather than the trace's, and
+    // it now lives with the rest of them in JustEnoughJsonHasToBeEnoughTest, which says why the
+    // carve-out exists and covers the cases this stopped at.
 
     private static Path dirFor(String name) {
         try {

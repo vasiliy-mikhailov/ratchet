@@ -141,7 +141,15 @@ public final class JsonlTrace implements Trace, ToolWatching {
                             + one(value(row, "arguments")) + ") -> " + one(value(row, "result"));
                     case "progress" -> "* " + one(value(row, "note"));
                     case "built" -> "[build " + value(row, "phase") + "] "
-                            + (row.contains("\"infra\":true") ? "did not run" : "ran");
+                            // READ, NOT GREPPED, AND THE GREP WAS WRONG. built() writes
+                            // "infra":"true" — a quoted string, because of() takes String values —
+                            // and this looked for "infra":true. So the "did not run" branch was
+                            // unreachable: every build that never ran, a missing toolchain or an
+                            // absent dependency, was summarised as one that ran and failed. Those
+                            // call for opposite responses, and the summary is what a person reads
+                            // to decide. Found by a mutation that could not be killed, because a
+                            // branch nothing can reach cannot be made to behave differently.
+                            + ("true".equals(value(row, "infra")) ? "did not run" : "ran");
                     case "settled" -> "SETTLED " + value(row, "state") + ": "
                             + one(value(row, "because"));
                     default -> "";
@@ -220,27 +228,31 @@ public final class JsonlTrace implements Trace, ToolWatching {
     }
 
     /** A field out of a written row, without parsing JSON the writer already knows the shape of. */
+    /**
+     * ONE FIELD OF A RECORDED ROW, READ WITH THE READER THE ROW WAS WRITTEN WITH.
+     *
+     * <p>THIS WAS A THIRD COPY OF A STRING SCANNER AND IT HAD DRIFTED. {@link Json#read} is one,
+     * {@link Json#row} is another, and this was the third — in the same package, over the same
+     * rows, disagreeing about what they said. Measured against what {@link Settlement#escape}
+     * actually writes:
+     *
+     * <pre>
+     * written            Json.read gives   this used to give
+     * "line\nbreak"      line[NL]break     line break
+     * "bell&#92;u0007ring" bell[BEL]ring     bellu0007ring
+     * </pre>
+     *
+     * <p>The second row is the bug: no unicode-escape case existed, so the backslash was
+     * the four hex digits were kept as letters. A control character in an agent's name or a stage
+     * key therefore made {@link #happened} match a key that does not exist, and the summary it
+     * builds is what a person reads to find out why a run is still going.
+     *
+     * <p>The first row is NOT a bug and is why the two were ever different: this feeds a ONE-LINE
+     * summary, so a newline has to become a space. That is a display decision, and mixing it into
+     * the parse is what let the parse drift. Parsed correctly here, flattened afterwards.
+     */
     private static String value(String row, String key) {
-        String needle = "\"" + key + "\":\"";
-        int at = row.indexOf(needle);
-        if (at < 0) {
-            return "";
-        }
-        int from = at + needle.length();
-        StringBuilder out = new StringBuilder();
-        for (int i = from; i < row.length(); i++) {
-            char c = row.charAt(i);
-            if (c == '\\' && i + 1 < row.length()) {
-                char next = row.charAt(++i);
-                out.append(next == 'n' ? ' ' : next == 't' ? ' ' : next);
-                continue;
-            }
-            if (c == '"') {
-                break;
-            }
-            out.append(c);
-        }
-        return out.toString();
+        return Json.read(row, key).replace('\n', ' ').replace('\t', ' ').replace('\r', ' ');
     }
 
     private static String escape(String text) {
