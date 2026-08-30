@@ -3,12 +3,12 @@ package tech.mikhailov.ratchet.record;
 /**
  * WHAT WE KEPT, AND WHAT WE OMITTED. One question, one implementation.
  *
- * <p>Six places in this library cut text for output and each brought its own marker. Three of them
- * write the SAME sentence — {@code ... (truncated, total N chars)} — differing only in leading
- * whitespace. {@code Recording} writes a fourth and is the only one that says what to do about it.
- * {@code Refused} writes a bare ellipsis carrying no magnitude at all. And {@code Reasoning} cuts
- * the offending line at ninety characters with no marker whatever, in the diagnostic for a runaway,
- * where the repeated line is the evidence.
+ * <p>Six places in this library cut text for output and each brought its own marker. Three wrote
+ * the SAME sentence differing only in leading whitespace; {@code Recording} wrote a fourth and was
+ * the only one that said what to DO about the loss; {@code Refused} wrote a bare ellipsis carrying
+ * no magnitude at all; and {@code Reasoning} cut the offending line at ninety characters with no
+ * marker whatever, in the diagnostic for a runaway, where the repeated line is the evidence. All
+ * six come through here now.
  *
  * <p>A RESULT IS NEVER LARGER THAN WHAT IT REPLACED, which is the property the hand-written
  * versions lacked. A marker costs about thirty characters, so a line overrunning its bound by less

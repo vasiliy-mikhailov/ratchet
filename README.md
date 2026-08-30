@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.18.1</version>
+  <version>0.20.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.18.1 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.20.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -234,6 +234,19 @@ holding one consumer's idea of what a version is made of.
 
 The reader half. ratchet writes `settlements.jsonl` and `trace.jsonl` and does not ship anything
 that parses them back into a page. That asymmetry is real and worth naming rather than hiding.
+
+**Tools.** `Tool` is three strings and this library ships none, deliberately: the loop must not
+decide what a caller's agent can do. But every caller then guesses the same list, and guessing is
+worse than measuring — so [TOOLS.md](TOOLS.md) records what one agent actually reached for across
+816 calls and six runs of a real task. Read its last section first: those runs were not controlled
+against each other, so it is evidence of *which tools get reached for*, not a ranking to tune
+against.
+
+**A compaction policy.** `Between` hands a caller the conversation before each request and takes
+back what to send; deciding when and what to drop needs the route's real context window and whether
+anyone is watching, neither of which a library called from inside somebody else's program can see.
+The same goes for `Spilling`: ratchet decides when a result is too big, and the caller decides
+where the rest of it goes. See [SPEC-context.md](SPEC-context.md).
 
 ## Building
 

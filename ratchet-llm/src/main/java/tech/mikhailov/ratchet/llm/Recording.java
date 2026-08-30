@@ -43,6 +43,20 @@ public final class Recording {
      */
     public static Map<Tool, Calling> at(Map<Tool, Calling> tools, Trace trace, String agent,
                                         int maxResult) {
+        return at(tools, trace, agent, maxResult, Spilling.none());
+    }
+
+    /**
+     * THE SAME, WITH SOMEWHERE FOR THE REST TO GO.
+     *
+     * <p>The record has always kept the whole result and the prompt has always got a bound. What
+     * was missing was a way to tell the model WHERE the rest is: a magnitude says something is
+     * gone, a locator lets an agent go and get it, and the difference decides whether it asks again
+     * or guesses. See {@link Spilling} — the store is the caller's, because where a result goes is
+     * a fact about their filesystem and their retention and not about this library.
+     */
+    public static Map<Tool, Calling> at(Map<Tool, Calling> tools, Trace trace, String agent,
+                                        int maxResult, Spilling spilling) {
         Map<Tool, Calling> wrapped = new LinkedHashMap<>();
         if (tools == null) {
             return wrapped;
@@ -56,9 +70,10 @@ public final class Recording {
                 // one that told the reader what to DO about the loss — and that half survives as
                 // the recovery clause. The sentence is shared; the guidance stays this call site's,
                 // because only it knows that narrowing the request is the way to get the rest.
-                return result == null ? null
-                        : Retained.head(result, maxResult, "\n")
-                                .recoverableBy("Narrow the request if you need the rest.").text();
+                if (result == null || result.length() <= maxResult) {
+                    return result;
+                }
+                return (spilling == null ? Spilling.none() : spilling).kept(result, maxResult);
             } catch (RuntimeException threw) {
                 // A THROW IS AN EVENT, NOT AN ABSENCE. Asking catches this and hands the message to
                 // the model as the call's result, so without this line the model is told something
