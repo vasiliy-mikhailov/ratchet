@@ -439,7 +439,10 @@ class EveryRowInTheCorpusCameThroughHereTest {
         assertEquals("* " + "x".repeat(180), log.get(0),
                 "the mark means something was lost, so putting it on a line that lost nothing is "
                         + "a lie a reader cannot check");
-        assertEquals("* " + "y".repeat(180) + " ...", log.get(1), "one character over and it says so");
+        assertEquals("* " + "y".repeat(180) + " ... (truncated, total 181 chars)", log.get(1),
+                "one character over and it says so, AND says how much there was: a marker that "
+                        + "only says it was cut cannot be told apart in a corpus from the other "
+                        + "three bounds in this library, all of which report a total");
     }
 
     // --- rows this run did not write, which is most of them ---

@@ -76,6 +76,24 @@ class AConsumerOutsideThisPackageChoosesWhatTheSummaryTellsTest {
                 "one character is a choice somebody made; zero is a line that says nothing");
     }
 
+    /**
+     * The property the other three bounds in this library already had and this one did not. A
+     * marker reading only {@code " ..."} cannot be told apart in a corpus from the watcher's clip
+     * or the record's, so a reader who finds a stub cannot learn which bound produced it — which
+     * is what the consumer who reported this had to read the sources to work out.
+     */
+    @Test
+    void whateverTheSummaryCutsSaysHowMuchThereWasSoTheClipsCanBeToldApart(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.progress("", LONG);
+
+        String cut = trace.happened("", "", 10, Telling.upTo(50));
+
+        assertTrue(cut.contains("(truncated, total 4000 chars)"),
+                "the size of the whole line, so a reader knows what is missing and which bound "
+                        + "took it: " + cut);
+    }
+
     private static Trace written(Path dir) {
         return new JsonlTrace(dir.resolve("trace.jsonl"), dir.resolve("settlements.jsonl"), "run");
     }

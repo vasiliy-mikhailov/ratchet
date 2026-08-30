@@ -48,13 +48,33 @@ public interface Telling {
      * property of this type at all. Each door names its own default at its own call site, with the
      * reason it has that one, and this type only says how to express a bound.
      *
-     * <p>WHAT THE EVIDENCE SAYS ABOUT 180, so the next caller need not measure it again. That
-     * consumer's tool results run p50 = 485 and p90 = 7,492, so 180 is below the median: nearly
-     * every line was a stub. 8,000 would keep nine in ten whole and is what this library means by
-     * "enough to see what happened" everywhere else it has had to decide. The default has not been
-     * moved because the door is what was asked for and a bigger summary is paid by every consumer,
-     * including those who never measured. If your agents re-read files they have already read,
-     * {@code Telling.upTo(8_000)} is the number the evidence supports.
+     * <p>WHAT THE EVIDENCE SAYS ABOUT 180, so the next caller need not measure it again — WITH ITS
+     * PROVENANCE, because a number in a library outlives the report it came from and the next
+     * caller will size their own bound from this paragraph.
+     *
+     * <p>Two measurements, both from the same consumer, both of TOOL RESULTS AS RETURNED rather
+     * than of lines as they reach this bound. They are not the same quantity: {@link Trace#happened}
+     * flattens newlines and prefixes each row before clipping, so a result and the line carrying it
+     * differ in length. Size a bound from these knowing that.
+     *
+     * <ul>
+     *   <li>Across four run roots, 180,525 results: p50 485, p90 7,492, p99 47,820.
+     *   <li>Across one 21-repository sweep, 482 calls: p50 167, p90 8,917, p99 and max 44,605,
+     *       with 17 over 20,000.
+     * </ul>
+     *
+     * <p>180 is below the median of both, so nearly every line was a stub. 8,000 sits at the p90 of
+     * the second and is what this library means by "enough to see what happened" everywhere else it
+     * has had to decide.
+     *
+     * <p>THE DEFAULT HAS NOT BEEN MOVED, and the reason is worth as much as the number. The door is
+     * what was asked for; a bigger summary is paid by every consumer including those who never
+     * measured; and what was actually observed is a CORRELATION between a stubbed summary and a
+     * re-read, which is not yet proof that raising the bound stops the re-read. That consumer is
+     * running the same 21 repositories at 180 and at 8,000 to find out. If your agents re-read
+     * files they have already read, {@code Telling.upTo(8_000)} is where to start; the product of
+     * this bound and {@link Trace#happened}'s line budget is what to watch, because sixty unbounded
+     * lines against a 44,605-character result is a summary that can exceed a context on its own.
      *
      * <p>A bound here is paid PER LINE, and {@link Trace#happened}'s line budget bounds how many
      * lines there are. The two trade against each other and both are the caller's.

@@ -270,11 +270,20 @@ public final class JsonlTrace implements Trace, ToolWatching {
      * showed a stub of every answer and every tool result, and the consumer measured what that
      * cost: 62% of their tool calls repeated an identical call and re-fetched 83% of all bytes
      * read. See {@link Telling}.
+     *
+     * <p>AND IT SAYS HOW MUCH IT CUT, which is the property the other three bounds in this library
+     * already have and this one did not. A marker reading only {@code " ..."} cannot be told apart
+     * in a corpus from the watcher's clip or the record's, so a reader who finds a stub cannot
+     * learn which bound produced it without reading these sources — which is what the consumer who
+     * reported this had to do. A total makes the record self-describing about its own losses.
      */
     private static String one(Telling telling, String kind, String text) {
         String flat = text.replace("\\n", " ").replace('\n', ' ').strip();
         int room = telling.room(kind, flat);
-        return flat.length() > room ? flat.substring(0, Math.max(0, room)) + " ..." : flat;
+        return flat.length() > room
+                ? flat.substring(0, Math.max(0, room))
+                        + " ... (truncated, total " + flat.length() + " chars)"
+                : flat;
     }
 
     /** A field out of a written row, without parsing JSON the writer already knows the shape of. */
