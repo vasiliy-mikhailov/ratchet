@@ -156,26 +156,37 @@ Three properties fall out of that, and they are what ratchet actually needs:
   saw."* Ratchet has the same split already and has never named it: `JsonlTrace` is the transcript,
   the conversation is the surface.
 
-### What ratchet takes
+### What ratchet takes — built in 0.21.0
 
-Not `Session`, not `SurfaceManager`, not sequence numbers, not `foldSurface`. Those are a harness.
-Three things, because only the library holding the list can provide them:
+Not `Session`, not persistence, not sequence numbers that outlive a process. Those are a harness.
+Two things, because only the library holding the conversation can provide them:
 
 ```java
-@FunctionalInterface
-public interface Between { List<Said> turn(List<Said> conversation); }   // consulted before each request
+public final class Turns {
+    void said(Said s);                          // append
+    void replace(int from, int to, Said with);  // append a replacement citing what it shadowed
+    List<Said>  messages();                     // the surface: what the model sees
+    List<Entry> spoken();                       // the transcript: everything, replacements included
+    int generation();                           // how many replacements have landed
+}
 
-public static boolean balancedBefore(List<Said> conversation, int at);
-public static boolean balancedAfter(List<Said> conversation, int at);
+@FunctionalInterface
+public interface Between { void turn(Turns turns); }   // called before each request
 ```
 
-`Between` is the seam: the caller sees the whole conversation and returns what the next request
-should carry. Default is identity, which is today's behaviour exactly. The harness owns when, what
-and how much — none of which this library can see.
+**A RANGE, NOT A NEW LIST**, and 0.20.0 got that wrong. Returning a list said what to SEND: ratchet
+kept the original so nothing was destroyed, but nobody could tell afterwards which turns a
+compaction had shadowed, or build the next one on the last. A replacement is an append that cites
+the positions it covered, which is dsh's shape and the reason a compacted conversation stays
+legible.
 
-**Nothing is lost, because `Asking` keeps its own list.** A shorter return value shortens the *view*;
-the conversation stays. And what was shadowed is recorded, so the record does not quietly disagree
-with the request.
+**Two audiences, one log**, which ratchet had all along and never named. `messages()` shadows what
+was replaced; `spoken()` does not, because a landed replacement would erase conversation a reader
+has already seen.
+
+**The edge check is not the caller's to skip.** `replace` refuses a range that would cut a call from
+its result rather than trusting the one it was handed — the guard against orphaned calls must not be
+the thing that makes one.
 
 **The pairing helpers are ratchet's because only it knows what a `Said` is.** Contract taken from
 theirs: *true when no unanswered tool call crosses the cut* — and note that a tool result with no
@@ -205,10 +216,11 @@ reserving the notice out of every budget was dsh's answer to a hard byte cap and
 readability bound, and the three markers' differing whitespace turned out to be the half that was
 not accidental.
 
-**What is deliberately still missing:** `Asking` keeps a `List<Said>` and derives nothing. A
-replacement is not yet an append that cites what it shadowed, so a caller compacting through
-`Between` re-derives every turn rather than building on the last. That is the next honest step, and
-it is the one that needs a conversation store.
+**What is deliberately still missing, and it is all harness:** persistence and replay across
+processes, per-step token metering against a route's real capacity, and the compaction policy
+itself. dsh has all three and needs them; a library called from inside somebody else's program can
+see none of what they depend on. The structural gap — a conversation you can derive from and replace
+against — closed in 0.21.0.
 
 ## Out of scope
 

@@ -15,34 +15,42 @@ import java.util.Set;
  * WHETHER needs to know if anyone is watching. A library called from inside somebody else's program
  * knows none of those.
  *
- * <p>So this is the seam and not the policy. The caller is handed the whole conversation before each
- * request and returns what should be sent. Returning it unchanged is the default and is exactly
- * today's behaviour.
+ * <p>So this is the seam and not the policy. The caller is handed {@link Turns} before each request
+ * and may shadow ranges of it. Doing nothing is the default and is exactly today's behaviour.
  *
- * <p>THE VIEW IS SHORTENED, THE CONVERSATION IS NOT. What comes back here is used for one request
- * and not stored: {@link Asking} keeps appending to its own list, so the next call sees everything
- * that has happened and can decide again. Nothing a caller drops is lost, which is the same split
- * the record already makes between what a model is shown and what the corpus keeps.
+ * <p>THE VIEW IS SHORTENED, THE CONVERSATION IS NOT. A replacement is an APPEND that cites the
+ * positions it covered, so the shadowed turns stay in the log and a reader can see what the agent
+ * stopped being able to see, and when. That is the same split the record already makes between what
+ * a model is shown and what the corpus keeps — {@link Turns#messages()} against
+ * {@link Turns#spoken()}.
  *
- * <p>THE SHAPE IS TAKEN FROM {@code @deepseek-ai/dsh-session} RATHER THAN INVENTED. There, the
- * append-only log is the source of truth and the message history is DERIVED from it; a replacement
- * is itself an append carrying {@code surfaceOp: replace(start, end)} and the sequence numbers it
- * shadowed, and the shadowed events stay in the log. This is that idea at the size a library can
- * carry: no session, no sequence numbers, no fold — one function, called between turns.
+ * <p>THE SHAPE IS TAKEN FROM {@code @deepseek-ai/dsh-session} RATHER THAN INVENTED. There the
+ * append-only log is the source of truth and the message history is DERIVED from it, and a
+ * replacement carries {@code surfaceOp: replace(start, end)} with the sequence numbers it shadowed.
+ * This is that idea at the size a library can carry: no session, no persistence, no sequence numbers
+ * that outlive a process.
  */
 @FunctionalInterface
 public interface Between {
 
     /**
-     * @param conversation everything said so far, oldest first, including this library's own
-     *                     system turn — never modified by the caller, who returns a new list
-     * @return the messages the next request should carry; the same list is a valid answer
+     * Called before each request. Do nothing, or call {@link Turns#replace} as often as you like;
+     * what gets sent is {@link Turns#messages()} afterwards.
+     *
+     * <p>A RANGE RATHER THAN A NEW LIST, and that changed in 0.21.0 from a shape shipped in 0.20.0.
+     * Returning a list said what to SEND and lost what it replaced: ratchet kept the original, so
+     * nothing was destroyed, but nobody could tell afterwards which turns a compaction had shadowed
+     * or build the next one on the last. A range replacement is an append that cites what it
+     * covered, which is dsh's shape and the reason a compacted conversation stays legible.
+     *
+     * @param turns everything said so far, and the means to shadow a range of it
      */
-    List<Said> turn(List<Said> conversation);
+    void turn(Turns turns);
 
     /** Send the whole conversation, which is what every caller got before this seam existed. */
     static Between whole() {
-        return conversation -> conversation;
+        return turns -> {
+        };
     }
 
     /**

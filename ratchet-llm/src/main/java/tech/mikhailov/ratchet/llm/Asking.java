@@ -150,9 +150,9 @@ public final class Asking implements Agent {
      */
     @Override
     public String run(String task) {
-        List<Said> conversation = new ArrayList<>();
-        conversation.add(Said.system(systemPrompt));
-        conversation.add(Said.user(task));
+        Turns conversation = new Turns();
+        conversation.said(Said.system(systemPrompt));
+        conversation.said(Said.user(task));
 
         Reply reply = model.answer(new Ask(sending(conversation), advertised, label));
         int wallHits = 0;
@@ -192,8 +192,8 @@ public final class Asking implements Agent {
                             + "cut off mid tool call, so asking for less cannot help. Compact the "
                             + "history, shorten the system prompt, or raise the context window.");
                 }
-                conversation.add(Said.assistant(reply.said(), List.of()));
-                conversation.add(Said.user("That turn ran out of room while writing "
+                conversation.said(Said.assistant(reply.said(), List.of()));
+                conversation.said(Said.user("That turn ran out of room while writing "
                         + reply.dropped() + (reply.dropped() == 1 ? " tool call" : " tool calls")
                         + ", so it was not sent. Ask for less in one call, or split the work."));
                 reply = model.answer(new Ask(sending(conversation), advertised, label));
@@ -205,9 +205,9 @@ public final class Asking implements Agent {
             if (!reply.wantsTools()) {
                 return reply.said();
             }
-            conversation.add(Said.assistant(reply.said(), reply.calls()));
+            conversation.said(Said.assistant(reply.said(), reply.calls()));
             for (Called call : reply.calls()) {
-                conversation.add(Said.result(call, ran(call)));
+                conversation.said(Said.result(call, ran(call)));
             }
             // THE CALLER'S CEILING, ON WHAT IS ACTUALLY SPENT. A model that never stops asking
             // for tools is a real failure and nothing else here catches it: the wall guard above
@@ -238,19 +238,14 @@ public final class Asking implements Agent {
      * the next turn hands the caller everything again and it can decide afresh. A caller that drops
      * nothing gets exactly the behaviour that existed before this seam.
      *
-     * <p>A caller that hands back nothing at all is refused rather than obeyed. An empty request is
-     * not a smaller request, and the failure it produces — a model answering with no system prompt
-     * and no task — would be attributed to the model rather than to the policy that caused it.
+     * <p>An empty request is now impossible rather than refused. A replacement covers a range and
+     * puts something in its place, so a conversation that started with a system turn and a task
+     * cannot be emptied by compacting it — which is a better guarantee than the check it replaces,
+     * because it cannot be got wrong rather than being caught when it is.
      */
-    private List<Said> sending(List<Said> conversation) {
-        List<Said> carrying = between.turn(List.copyOf(conversation));
-        if (carrying == null || carrying.isEmpty()) {
-            throw new IllegalStateException("a Between returned "
-                    + (carrying == null ? "null" : "an empty conversation")
-                    + " for an agent that has said " + conversation.size() + " things. Compaction "
-                    + "shortens what is sent; it does not remove the question.");
-        }
-        return carrying;
+    private List<Said> sending(Turns conversation) {
+        between.turn(conversation);
+        return conversation.messages();
     }
 
     /**

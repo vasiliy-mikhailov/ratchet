@@ -18,6 +18,7 @@ import tech.mikhailov.ratchet.llm.Reply;
 import tech.mikhailov.ratchet.llm.Said;
 import tech.mikhailov.ratchet.llm.Spend;
 import tech.mikhailov.ratchet.llm.Tool;
+import tech.mikhailov.ratchet.llm.Turns;
 import tech.mikhailov.ratchet.record.Telling;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,47 +37,72 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AConsumerDecidesWhatEachRequestCarriesTest {
 
     @Test
-    void aConsumerDecidesWhatEachRequestCarries() {
+    void aConsumerShadowsARangeAndThatIsWhatGetsSent() {
         List<Integer> sizesSent = new ArrayList<>();
-        // It counts its own turns rather than the request size, because the request size is the
-        // thing under test: a model that stops when the REQUEST grows never stops against a caller
-        // whose whole purpose is to stop the request growing.
         Chat model = ask -> {
             sizesSent.add(ask.messages().size());
             return sizesSent.size() > 3 ? said("done") : wanting("ping");
         };
 
-        // Their policy: never send more than the system turn and the last two things said.
-        Between theirs = conversation -> conversation.size() <= 3 ? conversation
-                : List.of(conversation.get(0), conversation.get(conversation.size() - 2),
-                        conversation.get(conversation.size() - 1));
+        // Their policy: once the conversation is long, shadow the middle with one line, cutting at
+        // an edge where no tool call is separated from its result.
+        Between theirs = turns -> {
+            if (turns.size() > 4) {
+                int to = Between.balancedAtOrBefore(turns.messages(), turns.size() - 2);
+                if (to > 2) {
+                    turns.replace(2, to, Said.user("[earlier turns summarised]"));
+                }
+            }
+        };
 
         String answer = new Asking(model, "you are a test", one("ping"), "agent:test", null,
                 Telling.upTo(8_000), Budget.shipped(), theirs).run("go");
 
         assertEquals("done", answer, "the loop still finishes");
-        assertTrue(sizesSent.stream().skip(2).allMatch(n -> n <= 3),
-                "and every request after the conversation grew carried what they chose, not what "
-                        + "this library accumulated: " + sizesSent);
+        assertTrue(sizesSent.get(sizesSent.size() - 1) <= 5,
+                "and the last request carried what they left standing, not everything said: "
+                        + sizesSent);
     }
 
-    /** The view is shortened. The conversation is not, so the next turn can decide again. */
+    /**
+     * TWO AUDIENCES, ONE LOG. The model sees the surface, which shadows what was replaced. A reader
+     * sees everything said, because a landed replacement would otherwise erase conversation they
+     * have already seen — dsh warns about exactly this and names the distinction on its own log.
+     */
     @Test
-    void theConversationItselfIsNeverShortened() {
-        List<Integer> seenByThem = new ArrayList<>();
-        Chat model = ask -> seenByThem.size() < 3 ? wanting("ping") : said("done");
+    void theTranscriptKeepsWhatTheModelStoppedSeeing() {
+        Turns turns = new Turns();
+        turns.said(Said.system("you are a test"));
+        turns.said(Said.user("go"));
+        turns.said(Said.user("something the model will stop seeing"));
+        turns.said(Said.user("and so will this"));
 
-        Between watching = conversation -> {
-            seenByThem.add(conversation.size());
-            return List.of(conversation.get(0));
-        };
+        turns.replace(1, 3, Said.user("[three turns summarised]"));
 
-        new Asking(model, "you are a test", one("ping"), "agent:test", null,
-                Telling.upTo(8_000), Budget.shipped(), watching).run("go");
+        assertEquals(3, turns.messages().size(), "the model sees the summary and what followed");
+        assertEquals("[three turns summarised]", turns.messages().get(1).text());
+        assertEquals(5, turns.spoken().size(),
+                "and the transcript has all four originals plus the replacement, because nothing "
+                        + "was destroyed — a second view was shortened");
+        assertEquals(1, turns.generation(), "one replacement has landed");
+    }
 
-        assertTrue(seenByThem.get(seenByThem.size() - 1) > seenByThem.get(0),
-                "they were handed a growing conversation even though every request they returned "
-                        + "carried one message: " + seenByThem);
+    /** A replacement is an append, and it says which positions it covered. */
+    @Test
+    void aReplacementIsAnAppendThatSaysWhatItShadowed() {
+        Turns turns = new Turns();
+        turns.said(Said.system("s"));
+        turns.said(Said.user("a"));
+        turns.said(Said.user("b"));
+
+        turns.replace(1, 3, Said.user("summary"));
+
+        List<Turns.Entry> log = turns.spoken();
+        assertTrue(log.get(0).appended() && log.get(1).appended() && log.get(2).appended(),
+                "the first three went on the tail");
+        assertFalse(log.get(3).appended(), "and the fourth went over something");
+        assertEquals(List.of(1, 2), log.get(3).shadowed(),
+                "citing the positions it covered, which is what makes a compaction legible later");
     }
 
     @Test
@@ -137,17 +163,35 @@ class AConsumerDecidesWhatEachRequestCarriesTest {
         assertEquals(4, Between.balancedAtOrBefore(conversation, 4), "and leaves a good one alone");
     }
 
-    /** Compaction shortens what is sent. It does not remove the question. */
+    /**
+     * THE EDGE CHECK IS NOT THE CALLER'S TO SKIP. An orphaned call poisons a conversation for every
+     * later turn, and one that reached a server wedged its tool-call parser for three hours. So a
+     * range that would make one is refused rather than trusted.
+     */
     @Test
-    void aConsumerThatHandsBackNothingIsRefused() {
-        Chat model = ask -> said("done");
+    void aRangeThatWouldOrphanACallIsRefused() {
+        Called call = new Called("c1", "ping", "{}");
+        Turns turns = new Turns();
+        turns.said(Said.system("s"));
+        turns.said(Said.user("go"));
+        turns.said(Said.assistant("", List.of(call)));
+        turns.said(Said.result(call, "pong"));
 
-        assertThrows(IllegalStateException.class,
-                () -> new Asking(model, "you are a test", one("ping"), "agent:test", null,
-                        Telling.upTo(8_000), Budget.shipped(), conversation -> List.of()).run("go"));
-        assertThrows(IllegalStateException.class,
-                () -> new Asking(model, "you are a test", one("ping"), "agent:test", null,
-                        Telling.upTo(8_000), Budget.shipped(), conversation -> null).run("go"));
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> turns.replace(1, 3, Said.user("x")))
+                .getMessage().contains("cuts a tool call away from its result"));
+        assertEquals(4, turns.messages().size(), "and nothing moved");
+    }
+
+    /** An empty conversation is now impossible rather than caught: a range puts something back. */
+    @Test
+    void aRangeThatIsNotARangeIsRefused() {
+        Turns turns = new Turns();
+        turns.said(Said.system("s"));
+        turns.said(Said.user("go"));
+
+        assertThrows(IllegalArgumentException.class, () -> turns.replace(1, 1, Said.user("x")));
+        assertThrows(IllegalArgumentException.class, () -> turns.replace(0, 9, Said.user("x")));
+        assertThrows(IllegalArgumentException.class, () -> turns.replace(-1, 1, Said.user("x")));
     }
 
     private static Reply wanting(String name) {
