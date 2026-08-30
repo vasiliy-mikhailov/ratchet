@@ -69,8 +69,17 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
     @Test
     void anEmptyAnswerThatRanOutOfRoomWhileAskingForAToolIsNotEmptyEither() {
         // The third shape, visible only now that this library parses the frames itself: blank
-        // content, finish_reason length, and a tool call in the turn. There IS something to act on,
-        // so the guard requires the call list to be empty as well before it refuses the reply.
+        // content, finish_reason length, and a tool call in the turn.
+        //
+        // THIS COMMENT USED TO ARGUE THE OTHER WAY, and the argument was the defect. It read:
+        // "There IS something to act on, so the guard requires the call list to be empty as well
+        // before it refuses the reply." True of a COMPLETE call that merely coincided with the
+        // budget ending, and false of one whose arguments were cut mid-JSON — and the check could
+        // not tell them apart, because existence was all it looked at. langchain4j had the identical
+        // hole, written independently, because that is what the obvious guard looks like.
+        //
+        // The turn is still not silence. It asked for something and did not finish asking, which is
+        // a third thing, and it now says so.
         Reply reply = client().read(Stream.of(
                 "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"t1\","
                         + "\"type\":\"function\",\"index\":0,\"function\":{\"name\":\"read_file\"}}]},"
@@ -83,9 +92,14 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
                 "",
                 "data: [DONE]"));
 
-        assertTrue(reply.wantsTools(), "the turn asked for something; that is not silence");
-        assertEquals("read_file", reply.calls().get(0).name());
-        assertEquals(Ending.LENGTH, reply.ending(), "and it still says the budget ran out");
+        assertTrue(reply.cutMidCall(), "the turn asked for something and did not finish asking, "
+                + "which is neither an answer nor silence");
+        assertEquals(1, reply.dropped(), "and says how many were refused, because a reader told "
+                + "that something was dropped and not how much cannot tell one from twelve");
+        assertFalse(reply.wantsTools(), "there is nothing to run: half a call is not a call, and "
+                + "sending it poisons the conversation it goes into for every later turn");
+        assertEquals(Ending.LENGTH, reply.ending(), "and it still says the budget ran out — "
+                + "relabelling it would destroy the only evidence of which turns hit the wall");
     }
 
     @Test

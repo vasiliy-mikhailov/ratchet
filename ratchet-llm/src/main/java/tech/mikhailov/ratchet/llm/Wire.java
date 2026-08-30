@@ -377,6 +377,26 @@ public final class Wire implements Chat {
         watching.flush();
         List<Called> asked = new ArrayList<>();
         calls.values().forEach(c -> asked.add(c.done()));
+        // A CALL CUT IN HALF IS NOT A CALL. The guard above asks whether the turn produced nothing;
+        // this asks whether what it produced was FINISHED, which is a different question and the one
+        // the old check could not answer. A generation that hits the wall mid-call leaves arguments
+        // that are not valid JSON, and running them executes a tool on a fragment of its request;
+        // worse, the malformed call goes into the conversation, is re-sent on every later turn, and
+        // is re-parsed by the server every time. One consumer lost lanes permanently that way, and a
+        // shared engine spent three hours wedged in a tool-call parser looping on such a stump.
+        //
+        // DROPPED, NOT THROWN. Throwing ends the lane, which is the cost being removed rather than
+        // relocated. The finish reason stays LENGTH because it is the only evidence of which turns
+        // hit the wall, and relabelling it would destroy the signal that says so.
+        //
+        // THE ORDER IS LOAD-BEARING. A blank-content turn whose only output was a tool call
+        // satisfies every clause of the guard above the moment its call is dropped, so dropping
+        // first would turn exactly this case into the Truncated it is meant to avoid. The refusal is
+        // decided on the turn as received; the drop is applied after.
+        if (ending == Ending.LENGTH && !asked.isEmpty()) {
+            return new Reply(said.toString(), reasoning.toString(), List.of(), ending, spend,
+                    asked.size());
+        }
         return new Reply(said.toString(), reasoning.toString(), asked, ending, spend);
     }
 

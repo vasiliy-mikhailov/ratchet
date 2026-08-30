@@ -155,6 +155,21 @@ public final class Asking implements Agent {
                 throw new Exhausted("Something is wrong, exceeded " + MAX_ROUNDS
                         + " sequential tool executions");
             }
+            // BEFORE wantsTools(), WHICH IS FALSE HERE AND WOULD END THE AGENT. Wire refuses a call
+            // cut in half by the token wall, so the turn asked for a tool and has none to run. Left
+            // to the check below, that reads as an ordinary answer and returns whatever prose the
+            // model had managed — silently ending an agent mid-task on a truncation.
+            //
+            // The turn is kept, without its calls, and the model is told what happened. Nothing is
+            // thrown: the lane continues, which is the point.
+            if (reply.cutMidCall()) {
+                conversation.add(Said.assistant(reply.said(), List.of()));
+                conversation.add(Said.user("That turn ran out of room while writing "
+                        + reply.dropped() + (reply.dropped() == 1 ? " tool call" : " tool calls")
+                        + ", so it was not sent. Ask for less in one call, or split the work."));
+                reply = model.answer(new Ask(conversation, advertised, label));
+                continue;
+            }
             if (!reply.wantsTools()) {
                 return reply.said();
             }
