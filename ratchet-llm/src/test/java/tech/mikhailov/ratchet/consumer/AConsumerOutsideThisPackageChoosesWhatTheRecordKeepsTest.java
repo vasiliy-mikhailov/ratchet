@@ -100,6 +100,13 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
                         + "read the environment or the shipped value instead would fail here");
     }
 
+    /** Reachable from outside, which is the only place the gap it closes was ever felt. */
+    @Test
+    void aConsumerOutsideThisPackageCanLeaveTheBudgetToTheServer() {
+        assertEquals(0, Sampling.serverDecides().maxTokens(),
+                "a consumer migrating onto this library reported that it could not say this at all");
+    }
+
     @Test
     void theRenderKeepsLessThanTheBriefAndTheAnswerBecauseItAloneIsPaidAgain() {
         Keeping shipped = Keeping.shipped();

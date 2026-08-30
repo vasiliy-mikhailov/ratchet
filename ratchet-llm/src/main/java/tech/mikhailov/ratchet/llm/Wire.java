@@ -513,7 +513,11 @@ public final class Wire implements Chat {
         fields.add(Json.field("model", Json.string(endpoint.model())));
         fields.add(Json.field("stream", "true"));
         fields.add(Json.field("stream_options", "{\"include_usage\":true}"));
-        fields.add(Json.field("max_tokens", String.valueOf(sampling.maxTokens())));
+        // OMITTED RATHER THAN SENT AS ZERO. Zero on this field means "no budget" to this record
+        // and "answer in nothing" to a server, which are opposite instructions.
+        if (sampling.maxTokens() > 0) {
+            fields.add(Json.field("max_tokens", String.valueOf(sampling.maxTokens())));
+        }
         fields.add(Json.field("temperature", String.valueOf(sampling.temperature())));
         fields.add(Json.field("messages",
                 Json.array(ask.messages(), Said::wire)));

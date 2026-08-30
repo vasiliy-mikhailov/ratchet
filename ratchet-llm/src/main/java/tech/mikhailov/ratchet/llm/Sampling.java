@@ -37,10 +37,19 @@ public record Sampling(double temperature, int maxTokens, int thinkingTokens) {
         if (temperature < 0) {
             throw new IllegalArgumentException("temperature cannot be negative: " + temperature);
         }
-        if (maxTokens < 1) {
-            throw new IllegalArgumentException("maxTokens must leave room for an answer: " + maxTokens);
+        if (maxTokens < 0) {
+            throw new IllegalArgumentException("maxTokens cannot be negative: " + maxTokens);
         }
-        if (thinkingTokens >= maxTokens) {
+        if (thinkingTokens < 0) {
+            throw new IllegalArgumentException("thinkingTokens cannot be negative: " + thinkingTokens);
+        }
+        // ZERO IS NOT A BUDGET OF NOTHING, IT IS NO BUDGET — the field is left off the request and
+        // the server decides. A consumer migrating onto this library reported the gap: the client
+        // it replaced expressed "let the server decide" by simply omitting max_tokens, and this
+        // record could not say it at all, because the guard that refuses a budget too small to
+        // answer in also refused the one value that means "do not send one". A guard written to
+        // catch a typo took a legitimate state with it.
+        if (maxTokens > 0 && thinkingTokens >= maxTokens) {
             throw new IllegalArgumentException("thinkingTokens (" + thinkingTokens + ") must leave "
                     + "room inside maxTokens (" + maxTokens + ") for the answer; they share a pool");
         }
@@ -50,6 +59,23 @@ public record Sampling(double temperature, int maxTokens, int thinkingTokens) {
     public static Sampling fromEnv() {
         return new Sampling(0.0, 16_000,
                 Model.setting("THINKING_TOKENS", 4000));
+    }
+
+    /**
+     * NO COMPLETION BUDGET AT ALL: {@code max_tokens} is not sent and the server's own default
+     * stands.
+     *
+     * <p>The state a consumer could not express. It is a real one — a deployment that has tuned its
+     * server does not want this library overriding it, and a proxy in front of that server may have
+     * an opinion of its own. {@link #thinkingTokens} still travels, because that is a separate
+     * field and the two are only pooled once a completion budget exists to pool them in.
+     *
+     * <p>IT IS NOT THE DEFAULT AND SHOULD NOT BE. {@link Truncated} exists because an unbounded
+     * budget on this project's endpoint spent 11,700 characters on reasoning and returned no answer
+     * at all. Ask for this when you know your server; take {@link #deterministic()} when you do not.
+     */
+    public static Sampling serverDecides() {
+        return new Sampling(0.0, 0, 4_000);
     }
 
     /** The shipped numbers, spelt out, and not readable from the environment. */

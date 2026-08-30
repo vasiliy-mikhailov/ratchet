@@ -162,6 +162,34 @@ class AConsumerBringsItsOwnModelTest {
         // budget that swallows the pool — it caught this test before the test caught anything.
     }
 
+    /**
+     * THE STATE A CONSUMER COULD NOT EXPRESS, reported by one migrating off the client this
+     * replaced. That client said "let the server decide" by simply omitting {@code max_tokens};
+     * this record refused every value that could mean it, because the guard catching a budget too
+     * small to answer in also caught the one value meaning "do not send a budget at all".
+     */
+    @Test
+    void aConsumerCanLeaveTheCompletionBudgetToTheServer() throws IOException {
+        String sent = sentBy(where -> Model.forProducer(QUIET, where, Retry.none(),
+                Sampling.serverDecides()));
+
+        assertFalse(sent.contains("max_tokens"),
+                "the field is absent rather than zero: zero means no budget to this record and "
+                        + "answer in nothing to a server, which are opposite instructions: " + sent);
+        assertTrue(sent.contains("\"temperature\""),
+                "and the rest of the sampling still travels");
+    }
+
+    /** Zero is the one value that means it, so the guard has to let exactly that one through. */
+    @Test
+    void aNegativeBudgetIsStillRefusedBecauseOnlyZeroMeansUnset() {
+        assertThrows(IllegalArgumentException.class, () -> Sampling.deterministic().withMaxTokens(-1));
+        assertEquals(0, Sampling.serverDecides().maxTokens(), "and zero is a value, not a throw");
+        assertEquals(4_000, Sampling.serverDecides().thinkingTokens(),
+                "the reasoning budget still travels: the two are only pooled once there is a "
+                        + "completion budget to pool them in");
+    }
+
     @Test
     void theShippedDefaultIsStillZeroAllTheWayDown() throws IOException {
         String sent = sentBy(where -> Model.forProducer(QUIET, where, Retry.none(),
