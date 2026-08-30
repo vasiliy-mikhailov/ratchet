@@ -117,31 +117,70 @@ a measured one — `TOOLS-2026-08-30.md`, 816 calls across six runs, with its ow
 were uncontrolled and it is evidence of *which tools get reached for* rather than a ranking to tune
 against. Reference it from the README. Do not ship it as code.
 
-## 5. Compaction — the policy is the harness's; the seam is ours
+## 5. Compaction — the seam, pulled from dsh's API rather than invented
 
-Everything about *when* and *what* to compact needs things ratchet cannot see: the route's real
-context window, which results are cheap to re-fetch, whether a human is watching. dsh resolves
-capacity from its own adapter and prices the whole envelope at every step boundary. A library called
-from inside somebody else's program has none of that.
+Read `@deepseek-ai/dsh-session/lib/types/surface.d.ts` before building any of this. The shapes below
+are theirs, not a paraphrase.
 
-**So ratchet does not compact. It makes the conversation compactable**, which is the one thing only
-it can do, because only it holds the list:
+**The inversion that decides everything else.** In dsh the append-only log is the source of truth and
+*the message history is derived from it*. Ratchet has this backwards: `Asking` holds a
+`List<Said>` and that list IS the conversation, so there is nothing to derive from and nothing to
+replace against.
 
-- the conversation is addressable between turns, not a private `List<Said>` discarded at the end
-- a caller can read it and hand back a replacement before the next request
-- tool-pairing boundaries are exposed, so a caller can find an edge where no unanswered call
-  crosses — **never cut a call from its result**, which is the shape that poisons a conversation and
-  can wedge a server's parser
-- what was replaced stays in the record, linked to what replaced it
+```ts
+SurfaceOp              = 'append' | { op: 'replace', start, end }
+SurfaceFoldReplacement = { seq, start, end, shadowedSeqs }
+deriveEventMessage(event) -> Message | null      // THE per-node projection rule
+```
 
-That is a seam, and it is small. What sits on top of it — prune tool results free first, remeasure,
-summarize only if still over, retain a recent tail — is the harness's policy, and dsh's numbers are
-there to be copied by whoever writes one: eleven compaction cycles, one summarization, 788 prune
-marks over a 4.1 MB session. Ten of eleven absorbed with no model call at all.
+Three properties fall out of that, and they are what ratchet actually needs:
 
-**The prerequisite is still real and still ours.** `Asking` builds a `List<Said>` in memory and
-discards it; `Journal` holds per-node answers and `JsonlTrace` a bounded summary. Neither is the
-conversation. Until it is kept, there is nothing for a harness to compact.
+- **A replacement is an append.** Compaction never mutates: it appends a node carrying
+  `surfaceOp: replace(start, end)` and `sourceEventSeqs`, and the shadowed events stay in the log.
+  "Nothing is destroyed; a second view is shortened."
+- **One projection rule means replay is exact.** `deriveMessages` folds it over the live surface, and
+  an external reconstructor folds the *same function* over a log prefix to rebuild the exact messages
+  any past request was built from.
+- **Two audiences, one log, separated by a predicate.** `isAppendSurfaceEvent` is the human
+  transcript; the model-visible surface deliberately shadows replaced ranges and is *"the wrong
+  source for a human transcript — a landed replacement would erase conversation the user already
+  saw."* Ratchet has the same split already and has never named it: `JsonlTrace` is the transcript,
+  the conversation is the surface.
+
+### What ratchet takes
+
+Not `Session`, not `SurfaceManager`, not sequence numbers, not `foldSurface`. Those are a harness.
+Three things, because only the library holding the list can provide them:
+
+```java
+@FunctionalInterface
+public interface Between { List<Said> turn(List<Said> conversation); }   // consulted before each request
+
+public static boolean balancedBefore(List<Said> conversation, int at);
+public static boolean balancedAfter(List<Said> conversation, int at);
+```
+
+`Between` is the seam: the caller sees the whole conversation and returns what the next request
+should carry. Default is identity, which is today's behaviour exactly. The harness owns when, what
+and how much — none of which this library can see.
+
+**Nothing is lost, because `Asking` keeps its own list.** A shorter return value shortens the *view*;
+the conversation stays. And what was shadowed is recorded, so the record does not quietly disagree
+with the request.
+
+**The pairing helpers are ratchet's because only it knows what a `Said` is.** Contract taken from
+theirs: *true when no unanswered tool call crosses the cut* — and note that a tool result with no
+preceding open call **throws** rather than returning false. That is corrupt state, not an unbalanced
+edge, and conflating them is how an orphaned call gets manufactured by the thing meant to prevent it.
+
+### What ratchet leaves
+
+Trigger policy, retention ratios, summarization, the token meter. dsh resolves capacity from its own
+adapter and prices the envelope at every step boundary; a library called from inside somebody else's
+program has none of that. Its numbers are here to be copied by whoever writes the policy: compact at
+`0.8` of the routed window, retain `0.16`, prune tool results at `8192 → 4096 + marker + 1024` first,
+remeasure, summarize only if still over. Eleven cycles, one summarization, 788 prune marks over a
+4.1 MB session — **ten of eleven absorbed with no model call at all.**
 
 ## Order
 

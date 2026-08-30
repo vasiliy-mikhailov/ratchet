@@ -42,6 +42,9 @@ public final class Asking implements Agent {
     /** What this agent may spend before it is told it will not finish. See {@link Budget}. */
     private final Budget budget;
 
+    /** What each request carries, which is the caller's between turns. See {@link Between}. */
+    private final Between between;
+
     private final Chat model;
     private final String systemPrompt;
     private final Map<String, Calling> byName;
@@ -75,7 +78,8 @@ public final class Asking implements Agent {
      */
     public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
                   ToolWatching listener, Telling watched) {
-        this(model, systemPrompt, tools, label, listener, watched, Budget.shipped());
+        this(model, systemPrompt, tools, label, listener, watched, Budget.shipped(),
+                Between.whole());
     }
 
     /**
@@ -86,6 +90,18 @@ public final class Asking implements Agent {
      */
     public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
                   ToolWatching listener, Telling watched, Budget budget) {
+        this(model, systemPrompt, tools, label, listener, watched, budget, Between.whole());
+    }
+
+    /**
+     * THE SAME, WITH WHAT EACH REQUEST CARRIES CHOSEN BY THE CALLER BETWEEN TURNS.
+     *
+     * <p>The seam compaction sits on. This library does not compact — see {@link Between} — because
+     * when, what and how much all need things only the caller can see.
+     */
+    public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
+                  ToolWatching listener, Telling watched, Budget budget, Between between) {
+        this.between = between == null ? Between.whole() : between;
         this.budget = budget == null ? Budget.shipped() : budget;
         this.watched = watched == null ? Telling.upTo(8_000) : watched;
         this.model = model;
@@ -137,7 +153,7 @@ public final class Asking implements Agent {
         conversation.add(Said.system(systemPrompt));
         conversation.add(Said.user(task));
 
-        Reply reply = model.answer(new Ask(conversation, advertised, label));
+        Reply reply = model.answer(new Ask(sending(conversation), advertised, label));
         int wallHits = 0;
         int turns = 1;
         long spent = reply.spend().prompt() + reply.spend().completion();
@@ -179,7 +195,7 @@ public final class Asking implements Agent {
                 conversation.add(Said.user("That turn ran out of room while writing "
                         + reply.dropped() + (reply.dropped() == 1 ? " tool call" : " tool calls")
                         + ", so it was not sent. Ask for less in one call, or split the work."));
-                reply = model.answer(new Ask(conversation, advertised, label));
+                reply = model.answer(new Ask(sending(conversation), advertised, label));
                 turns++;
                 spent += reply.spend().prompt() + reply.spend().completion();
                 continue;
@@ -208,10 +224,32 @@ public final class Asking implements Agent {
                         + " turns without finishing, which is past what the caller allowed. Raise "
                         + "the Budget, or look at what it is repeating.");
             }
-            reply = model.answer(new Ask(conversation, advertised, label));
+            reply = model.answer(new Ask(sending(conversation), advertised, label));
             turns++;
             spent += reply.spend().prompt() + reply.spend().completion();
         }
+    }
+
+    /**
+     * WHAT THIS REQUEST CARRIES, WHICH IS NOT NECESSARILY THE WHOLE CONVERSATION.
+     *
+     * <p>The result is used for one request and never stored: the conversation goes on growing, so
+     * the next turn hands the caller everything again and it can decide afresh. A caller that drops
+     * nothing gets exactly the behaviour that existed before this seam.
+     *
+     * <p>A caller that hands back nothing at all is refused rather than obeyed. An empty request is
+     * not a smaller request, and the failure it produces — a model answering with no system prompt
+     * and no task — would be attributed to the model rather than to the policy that caused it.
+     */
+    private List<Said> sending(List<Said> conversation) {
+        List<Said> carrying = between.turn(List.copyOf(conversation));
+        if (carrying == null || carrying.isEmpty()) {
+            throw new IllegalStateException("a Between returned "
+                    + (carrying == null ? "null" : "an empty conversation")
+                    + " for an agent that has said " + conversation.size() + " things. Compaction "
+                    + "shortens what is sent; it does not remove the question.");
+        }
+        return carrying;
     }
 
     /**
