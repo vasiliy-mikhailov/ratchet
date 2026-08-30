@@ -429,20 +429,28 @@ class EveryRowInTheCorpusCameThroughHereTest {
     }
 
     @Test
-    void aLineThatFitsIsNotMarkedAsCut(@TempDir Path dir) {
+    void aLineIsOnlyCutWhenCuttingItSavesSomething(@TempDir Path dir) {
         Trace trace = trace(dir);
 
         trace.progress(KEY, "x".repeat(180));
         trace.progress(KEY, "y".repeat(181));
+        trace.progress(KEY, "z".repeat(400));
 
         List<String> log = trace.happened("", "", 80).lines().toList();
         assertEquals("* " + "x".repeat(180), log.get(0),
                 "the mark means something was lost, so putting it on a line that lost nothing is "
                         + "a lie a reader cannot check");
-        assertEquals("* " + "y".repeat(180) + " ... (truncated, total 181 chars)", log.get(1),
-                "one character over and it says so, AND says how much there was: a marker that "
-                        + "only says it was cut cannot be told apart in a corpus from the other "
-                        + "three bounds in this library, all of which report a total");
+        // ONE CHARACTER OVER IS NOT CUT EITHER, AND THAT IS NEW. The marker costs 33 characters, so
+        // cutting a 181-character line at 180 returns 213 — larger for having been cut, and missing
+        // its end. The summary would have paid more to say what it withheld than keeping it cost.
+        // Found by running a consumer against a live model; no fixture here had a line inside the
+        // marker's own width, so nothing in this suite could see it.
+        assertEquals("* " + "y".repeat(181), log.get(1),
+                "cutting this loses a character and adds thirty-two, so it is not a cut");
+        assertEquals("* " + "z".repeat(180) + " ... (truncated, total 400 chars)", log.get(2),
+                "and a line far enough over IS cut, and says how much there was, because a marker "
+                        + "that only says it was cut cannot be told apart in a corpus from the "
+                        + "other three bounds in this library, all of which report a total");
     }
 
     // --- rows this run did not write, which is most of them ---

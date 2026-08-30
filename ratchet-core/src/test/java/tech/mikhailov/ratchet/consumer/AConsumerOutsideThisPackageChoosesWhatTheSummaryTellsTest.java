@@ -191,6 +191,49 @@ class AConsumerOutsideThisPackageChoosesWhatTheSummaryTellsTest {
                 "while the summary still promises one line per event");
     }
 
+    /**
+     * FOUND BY RUNNING A CONSUMER AGAINST A LIVE MODEL, not by anything in this suite. No fixture
+     * here had a line inside the marker's own width, so nothing could see it.
+     */
+    @Test
+    void aCutThatWouldMakeTheLineLongerIsNotMade(@TempDir Path dir) {
+        Trace trace = written(dir);
+        String justOver = "y".repeat(191);
+        trace.progress("", justOver);
+
+        String at180 = trace.happened("", "", 10, Telling.upTo(180));
+
+        assertTrue(at180.contains(justOver),
+                "the marker costs 33 characters, so clipping a 191-character line at 180 returns "
+                        + "213 — bigger for having been cut, and missing its end: " + at180);
+        assertFalse(at180.contains("truncated"), "and it does not claim a cut it did not make");
+    }
+
+    /** The conversation is the largest thing in the record and navigation could not see it. */
+    @Test
+    void theExchangeRowsAreNavigableBecauseTheyAreTheConversation(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.exchanged(new Trace.Exchange("to", "doer", 2, "the whole render", "", "", "", 0, 0, 0, ""));
+        trace.exchanged(new Trace.Exchange("back", "doer", 2, "", "what the model said", "", "stop",
+                7, 11, 40, ""));
+
+        assertEquals(2, trace.traceEvents("", ""),
+                "on a real run 20 of 31 rows were exchange and traceEvents reported 11");
+        assertEquals("the whole render", trace.traceSlice("", "", 0, 1).get(0).text());
+        assertEquals("what the model said", trace.traceSlice("", "", 1, 2).get(0).text());
+    }
+
+    /** An exchange that failed carries its reason rather than a blank. */
+    @Test
+    void anExchangeThatFailedSaysWhyRatherThanComingBackEmpty(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.exchanged(new Trace.Exchange("back", "doer", 2, "", "", "", "ERROR", 0, 0, 9,
+                "GaveUp: still streaming after 3h"));
+
+        assertEquals("GaveUp: still streaming after 3h", trace.traceSlice("", "", 0, 1).get(0).text(),
+                "a row that records a failure is not an empty row");
+    }
+
     private static Trace written(Path dir) {
         return new JsonlTrace(dir.resolve("trace.jsonl"), dir.resolve("settlements.jsonl"), "run");
     }

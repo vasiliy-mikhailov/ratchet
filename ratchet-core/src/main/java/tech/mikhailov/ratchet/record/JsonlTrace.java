@@ -357,8 +357,23 @@ public final class JsonlTrace implements Trace, ToolWatching {
             case "settled" -> Json.read(row, "state") + ": " + Json.read(row, "because");
             case "thought" -> Json.read(row, "thinking");
             case "priced" -> Json.read(row, "itemisation");
+            // THE CONVERSATION ITSELF, WHICH NAVIGATION COULD NOT SEE. happened omits exchange
+            // rows deliberately: it is a curated one-line-per-event summary and a re-rendered
+            // conversation is not one line. Navigation is not curated — it is the way in — and
+            // omitting these left it blind to the largest and most informative rows in the record.
+            // Measured on a real run: 20 of 31 rows were exchange, and traceEvents reported 11.
+            case "exchange" -> "back".equals(Json.read(row, "direction"))
+                    ? answerOrError(row)
+                    : Json.read(row, "sent");
             default -> "";
         };
+    }
+
+    /** What came back, or why nothing did: an exchange that failed carries its reason, not a blank. */
+    private static String answerOrError(String row) {
+        String got = Json.read(row, "got");
+        String error = Json.read(row, "error");
+        return error.isBlank() ? got : (got.isBlank() ? error : got + " [" + error + "]");
     }
 
     /**
@@ -379,10 +394,18 @@ public final class JsonlTrace implements Trace, ToolWatching {
     private static String one(Telling telling, String kind, String text) {
         String flat = text.replace("\\n", " ").replace('\n', ' ').strip();
         int room = telling.room(kind, flat);
-        return flat.length() > room
-                ? flat.substring(0, Math.max(0, room))
-                        + " ... (truncated, total " + flat.length() + " chars)"
-                : flat;
+        if (flat.length() <= room) {
+            return flat;
+        }
+        String cut = flat.substring(0, Math.max(0, room))
+                + " ... (truncated, total " + flat.length() + " chars)";
+        // A CUT THAT MAKES THE LINE LONGER IS NOT A CUT. The marker costs 33 characters, so a line
+        // that overruns the bound by less than that comes back BIGGER for having been clipped —
+        // measured on a real record: a 191-character line at a bound of 180 rendered as 213. The
+        // summary paid more to say what it withheld than keeping it would have cost, and the reader
+        // lost the end of the line for nothing. Found by running a consumer against a live model
+        // rather than by any test here, because no fixture had a line inside the marker's width.
+        return cut.length() < flat.length() ? cut : flat;
     }
 
     /** A field out of a written row, without parsing JSON the writer already knows the shape of. */
