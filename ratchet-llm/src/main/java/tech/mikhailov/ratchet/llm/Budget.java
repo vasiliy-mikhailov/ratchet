@@ -12,6 +12,17 @@ package tech.mikhailov.ratchet.llm;
  * conversation through the re-ask that followed. The same task family completes in a couple of hours
  * against a loop with no round bound at all, on this same model.
  *
+ * <p>MEASURED AGAINST ONE CONSUMER'S REAL WORK, which is the number to quote rather than any of the
+ * above. Across 75 completed agent turns: median 14 rounds, p90 67, worst 176 (476 calls), and
+ * <b>30.7% over twenty-five</b>. Their file-writing agents occupy eight of the worst ten. A cap that
+ * fires on a third of turns is not a safety net that occasionally catches a runaway; it is a bound
+ * on normal work, and the failure it produces is worse than a clean one — a lane throwing
+ * {@link Exhausted} and re-asking from nothing looks slow rather than broken.
+ *
+ * <p>Their corpus also settles the calls-per-round question that made the old name misleading:
+ * 2.78 tool calls per model turn across 6,121 calls, so a count of calls is nowhere near a count of
+ * rounds and the bound never measured what its name suggested.
+ *
  * <p>TOKENS ARE WHAT IS ACTUALLY SPENT, and they are what the context fills with, so one number
  * bounds both the money and the wall the conversation is heading for. Every {@link Reply} already
  * carries the server's own count.
@@ -38,8 +49,10 @@ public record Budget(long tokens, int rounds) {
      * TWO MILLION TOKENS AND A THOUSAND TURNS, both far above what finishing work costs.
      *
      * <p>Chosen to be a runaway guard rather than a work bound, which is the mistake the 25 made.
-     * One consumer's longest healthy conversation fitted 465 calls; a thousand turns is twice that
-     * and no honest task is stopped by it. These are numbers this library picked, so they are
+     * The longest healthy agent turn measured in the field is 176 rounds and 476 calls, so a
+     * thousand turns is roughly six times the worst real work anyone has reported. The token half
+     * is sized the same way: that consumer's heaviest PHASE spends 3.6M across many {@code run()}s,
+     * and this bounds one {@code run()}, where they sit well under two million. These are numbers this library picked, so they are
      * numbers a caller should be able to replace — hence {@link #of} and {@link #none()}.
      */
     public static Budget shipped() {
