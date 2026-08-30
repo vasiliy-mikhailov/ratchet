@@ -3,6 +3,7 @@ package tech.mikhailov.ratchet.llm;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import tech.mikhailov.ratchet.record.Retained;
 import tech.mikhailov.ratchet.record.Trace;
 import tech.mikhailov.ratchet.record.ToolWatching;
 
@@ -51,11 +52,13 @@ public final class Recording {
                 String result = doing.run(call);
                 // Recorded whole, returned bounded: the corpus wants everything, the prompt does not.
                 trace.tool(agent, tool.name(), call.arguments(), result);
-                if (result != null && result.length() > maxResult) {
-                    return result.substring(0, maxResult) + "\n[truncated: " + result.length()
-                            + " chars total. Narrow the request if you need the rest.]";
-                }
-                return result;
+                // THE SIXTH AND LAST HAND-ROLLED MARKER. This one was the best of them — the only
+                // one that told the reader what to DO about the loss — and that half survives as
+                // the recovery clause. The sentence is shared; the guidance stays this call site's,
+                // because only it knows that narrowing the request is the way to get the rest.
+                return result == null ? null
+                        : Retained.head(result, maxResult, "\n")
+                                .recoverableBy("Narrow the request if you need the rest.").text();
             } catch (RuntimeException threw) {
                 // A THROW IS AN EVENT, NOT AN ABSENCE. Asking catches this and hands the message to
                 // the model as the call's result, so without this line the model is told something

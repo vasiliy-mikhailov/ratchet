@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import tech.mikhailov.ratchet.record.Retained;
 import tech.mikhailov.ratchet.record.Trace;
 
 /**
@@ -212,8 +213,7 @@ public final class Listening {
             throw new IllegalArgumentException(
                     "a keeping policy answered " + room + " for the " + column + " column");
         }
-        return s.length() <= room ? s
-                : s.substring(0, room) + "\n... (truncated, total " + s.length() + " chars)";
+        return Retained.head(s, Math.max(1, room), "\n").text();
     }
 
     /**

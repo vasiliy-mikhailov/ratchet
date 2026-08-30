@@ -10,13 +10,17 @@ package tech.mikhailov.ratchet.record;
  * the offending line at ninety characters with no marker whatever, in the diagnostic for a runaway,
  * where the repeated line is the evidence.
  *
- * <p>THE NOTICE IS PAID FOR OUT OF THE BUDGET, which is the property the hand-written versions
- * lacked. A marker costs about thirty characters, so a line overrunning its bound by less came back
- * LARGER for having been cut — measured on a real record, a 191-character line at a bound of 180
- * rendered as 213, and lost its end for the privilege. 0.18.1 fixed that by declining to cut. This
- * is the structural form: the notice's cost is reserved before the cut is made, so a result is
- * always at most the budget, always strictly smaller than what it replaced, and a second pass over
- * it changes nothing.
+ * <p>A RESULT IS NEVER LARGER THAN WHAT IT REPLACED, which is the property the hand-written
+ * versions lacked. A marker costs about thirty characters, so a line overrunning its bound by less
+ * came back LARGER for having been cut — measured on a real record, a 191-character line at a bound
+ * of 180 rendered as 213, and lost its end for the privilege.
+ *
+ * <p>TWO BUDGETS, BECAUSE THERE ARE TWO QUESTIONS. {@link #head} takes a budget on the CONTENT and
+ * adds the notice after it: that is a readability bound, and it is what every caller in this library
+ * means. {@link #within} takes a hard CAP and pays for the notice out of it, which is what a bound
+ * on bytes entering a model's context means. Reserving everywhere was the first design and it was
+ * wrong for this library — at {@code upTo(40)} it yields seven characters of content and
+ * thirty-three of apology.
  *
  * <p>CUTS LAND ON CODE POINT BOUNDARIES. {@link String#substring} counts UTF-16 units, so a cut
  * through an emoji leaves a lone surrogate. On the wire that becomes {@code ?}; in the record it is
@@ -59,36 +63,81 @@ public record Retained(String text, Omitted omitted) {
         }
     }
 
-    /** The sentence three call sites were writing separately, with the total they all carried. */
-    private static String notice(int total) {
-        return " ... (truncated, total " + total + " chars)";
+    /**
+     * The sentence three call sites were writing separately, with the total they all carried.
+     *
+     * <p>THE SEPARATOR IS THE CALLER'S AND THE SENTENCE IS NOT. The three differed only in leading
+     * whitespace, which looked like the argument for one implementation — but the whitespace is the
+     * half that is not accidental: a summary promising one line per event cannot start the notice
+     * with a newline, and a render whose content is already multi-line reads as a ribbon without
+     * one. Sharing the sentence is the point; forcing the spacing would have made every record in
+     * this library slightly worse to read.
+     */
+    private static String notice(int total, String before) {
+        return before + "... (truncated, total " + total + " chars)";
     }
 
     /**
-     * The whole text, or its opening cut to fit {@code budget} INCLUDING the notice.
+     * The whole text, or its first {@code room} code points with the notice after them.
      *
-     * @param budget the size of the entire result, notice included; must be positive
+     * <p>THE BUDGET IS CONTENT, AND THE NOTICE IS EXTRA. That is the opposite of what this spec
+     * first said, and implementing it is what changed the answer. dsh reserves its notice out of the
+     * budget because its budget is a hard cap on bytes entering a model's context; every budget here
+     * is a readability bound on a line somebody will read. Reserved, {@code Telling.upTo(40)} yields
+     * seven characters of content and thirty-three of apology, which is honest and useless.
+     *
+     * <p>What the 191-into-180 defect actually proved is narrower and is enforced here: **a result
+     * is never larger than the input it replaced.** A cut that grows the text has lost the end of a
+     * line and charged for the privilege, so it is not made.
+     *
+     * @param room how many code points of TEXT to keep; the notice is added after them
      */
-    public static Retained head(String text, int budget) {
-        if (budget < 1) {
-            throw new IllegalArgumentException("a budget of " + budget + " keeps nothing, which is "
+    public static Retained head(String text, int room) {
+        return head(text, room, " ");
+    }
+
+    /**
+     * The same, with what precedes the notice chosen by the caller: a newline where the content is
+     * already multi-line, nothing where it is glued to a label.
+     */
+    public static Retained head(String text, int room, String before) {
+        if (room < 1) {
+            throw new IllegalArgumentException("a budget of " + room + " keeps nothing, which is "
                     + "not a smaller result but no result at all");
         }
         String whole = text == null ? "" : text;
         int total = whole.codePointCount(0, whole.length());
-        if (total <= budget) {
+        if (total <= room) {
             return new Retained(whole, new Omitted.None());
         }
-        String marker = notice(total);
-        int room = budget - marker.codePointCount(0, marker.length());
-        if (room < 1) {
-            // THE REPLACEMENT WOULD BE NO SMALLER THAN WHAT IT REPLACES, so there is nothing to
-            // gain by making it: the reader would lose the end of the text and pay for the loss.
-            // dsh states the same rule as a load-time invariant on its config; this states it here
-            // because ratchet's budgets arrive from a consumer's policy at call time.
+        String cut = cut(whole, room) + notice(total, before);
+        // NEVER LARGER THAN WHAT IT REPLACED. The notice costs 33 characters, so a line overrunning
+        // its bound by less comes back bigger for having been cut — measured on a real record, a
+        // 191-character line at a bound of 180 rendered as 213, and lost its end for it.
+        return cut.codePointCount(0, cut.length()) < total
+                ? new Retained(cut, new Omitted.Exact(total - room))
+                : new Retained(whole, new Omitted.None());
+    }
+
+    /**
+     * The whole text, or a cut that fits inside {@code cap} WITH the notice counted against it.
+     *
+     * <p>For a hard cap rather than a readability bound — a spill notice that must not itself push a
+     * result over the ceiling it exists to enforce. Here the notice's cost comes out of the budget,
+     * so the result is at most {@code cap} and, as with {@link #head}, never larger than its input.
+     */
+    public static Retained within(String text, int cap) {
+        if (cap < 1) {
+            throw new IllegalArgumentException("a cap of " + cap + " keeps nothing at all");
+        }
+        String whole = text == null ? "" : text;
+        int total = whole.codePointCount(0, whole.length());
+        if (total <= cap) {
             return new Retained(whole, new Omitted.None());
         }
-        return new Retained(cut(whole, room) + marker, new Omitted.Exact(total - room));
+        String marker = notice(total, " ");
+        int room = cap - marker.codePointCount(0, marker.length());
+        return room < 1 ? new Retained(whole, new Omitted.None()) : head(whole, room);
     }
 
     /** The first {@code points} code points, never splitting one. */

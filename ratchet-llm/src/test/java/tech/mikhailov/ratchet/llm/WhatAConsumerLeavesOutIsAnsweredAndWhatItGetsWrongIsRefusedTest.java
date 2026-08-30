@@ -238,9 +238,14 @@ class WhatAConsumerLeavesOutIsAnsweredAndWhatItGetsWrongIsRefusedTest {
         new Asking(model, "you are a test", one("ping", call -> overBy), "agent:test",
                 watching(watched)).run("go");
 
-        assertEquals("y".repeat(8_000) + "... (truncated, total 8001 chars)",
-                watched.get(0).result(),
-                "the first eight thousand characters, then the size of the whole thing");
+        // ONE OVER IS NOT CUT ANY MORE, and the number here is why the rule exists: cutting 8,001
+        // to 8,000 and adding a 33-character notice renders 8,033 — the watcher is shown MORE for
+        // the privilege of being told something was withheld, and the end of the result is gone.
+        assertEquals(overBy, watched.get(0).result(),
+                "a cut that saves one character and costs thirty-three is not made");
+        assertEquals("y".repeat(8_000) + "... (truncated, total 9000 chars)",
+                shownFor("y".repeat(9_000)),
+                "and a result far enough over is cut, and says how much there was altogether");
     }
 
     @Test
@@ -249,7 +254,7 @@ class WhatAConsumerLeavesOutIsAnsweredAndWhatItGetsWrongIsRefusedTest {
         // down, for the same reason. What a tool was asked to do IS the work, so the tool gets
         // every character the model wrote; a watcher is for watching, and an edit call whose
         // arguments carry a whole file would fill the log with a second copy of the record.
-        String huge = "y".repeat(8_001);
+        String huge = "y".repeat(9_000);
         List<String> asAsked = new ArrayList<>();
         List<Watched> watched = new ArrayList<>();
         Scripted model = new Scripted(ask -> ask.messages().size() == 2
@@ -261,9 +266,9 @@ class WhatAConsumerLeavesOutIsAnsweredAndWhatItGetsWrongIsRefusedTest {
             return "pong";
         }), "agent:test", watching(watched)).run("go");
 
-        assertEquals(8_001, asAsked.get(0).length(),
+        assertEquals(9_000, asAsked.get(0).length(),
                 "the tool is handed what the model wrote, whole");
-        assertEquals("y".repeat(8_000) + "... (truncated, total 8001 chars)",
+        assertEquals("y".repeat(8_000) + "... (truncated, total 9000 chars)",
                 watched.get(0).arguments(),
                 "and the watcher is handed as much of it as a watcher is for");
     }
@@ -290,6 +295,17 @@ class WhatAConsumerLeavesOutIsAnsweredAndWhatItGetsWrongIsRefusedTest {
     // ---- the stand-ins ----
 
     /** One tool of a given name, doing whatever the test in hand needs it to do. */
+    /** What a watcher is shown of a tool result of this size. */
+    private static String shownFor(String result) {
+        List<Watched> watched = new ArrayList<>();
+        Scripted model = new Scripted(ask -> ask.messages().size() == 2
+                ? wanting(called("ping"))
+                : saying("done"));
+        new Asking(model, "you are a test", one("ping", call -> result), "agent:test",
+                watching(watched)).run("go");
+        return watched.get(0).result();
+    }
+
     private static Map<Tool, Calling> one(String name, Calling doing) {
         Map<Tool, Calling> tools = new LinkedHashMap<>();
         tools.put(spec(name), doing);

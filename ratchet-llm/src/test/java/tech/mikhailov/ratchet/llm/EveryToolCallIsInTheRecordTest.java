@@ -32,9 +32,9 @@ class EveryToolCallIsInTheRecordTest {
         String answered = run(Recording.at(one(call -> huge), calls, "agent:doer", 20_000));
 
         assertEquals(50_000, calls.results.get(0).length(), "the corpus wants everything");
-        assertEquals(20_000 + "\n[truncated: 50000 chars total. Narrow the request if you need the rest.]"
-                .length(), answered.length(), "the prompt does not");
-        assertTrue(answered.endsWith("chars total. Narrow the request if you need the rest.]"),
+        assertEquals(20_000 + "\n... (truncated, total 50000 chars) Narrow the request if you need "
+                .length() + "the rest.".length(), answered.length(), "the prompt does not");
+        assertTrue(answered.endsWith("Narrow the request if you need the rest."),
                 "and it says it was cut rather than pretending that was the answer");
     }
 

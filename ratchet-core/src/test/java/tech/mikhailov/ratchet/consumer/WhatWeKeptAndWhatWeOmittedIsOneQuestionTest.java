@@ -27,36 +27,49 @@ class WhatWeKeptAndWhatWeOmittedIsOneQuestionTest {
     /** An emoji is two UTF-16 units and one code point, which is where the old cut went wrong. */
     private static final String EMOJI = "😀";
 
+    /** A readability bound: the budget is content, and the notice is the cost of saying so. */
     @Test
-    void aResultIsNeverLargerThanTheBudgetItWasGiven() {
-        for (int budget : new int[]{40, 100, 180, 1_000}) {
-            Retained kept = Retained.head("y".repeat(5_000), budget);
-            assertTrue(kept.text().length() <= budget,
-                    "the notice is paid for out of the budget rather than added to it, so a result "
-                            + "is at most what was asked for: budget " + budget + " gave "
-                            + kept.text().length());
+    void aBudgetOnContentKeepsThatMuchContentAndSaysWhatItDropped() {
+        Retained kept = Retained.head("y".repeat(5_000), 100);
+
+        assertTrue(kept.text().startsWith("y".repeat(100)), "a hundred characters of the line");
+        assertTrue(kept.text().endsWith("(truncated, total 5000 chars)"), "and then the notice");
+        assertEquals(new Retained.Omitted.Exact(4_900), kept.omitted());
+    }
+
+    /**
+     * A HARD CAP IS A DIFFERENT QUESTION AND GETS A DIFFERENT METHOD. Reserving everywhere was the
+     * first design and it was wrong for this library: at a bound of 40 it yields seven characters of
+     * content and thirty-three of apology. It is right where the bound is on bytes entering a
+     * model's context, which is what a spill notice must not push past.
+     */
+    @Test
+    void aHardCapPaysForItsOwnNoticeSoTheResultFitsInside() {
+        for (int cap : new int[]{100, 180, 1_000}) {
+            Retained kept = Retained.within("y".repeat(5_000), cap);
+            assertTrue(kept.text().length() <= cap,
+                    "cap " + cap + " gave " + kept.text().length());
         }
     }
 
     /**
-     * THE DEFECT A LIVE RUN FOUND, AND WHY RESERVING BEATS DECLINING. The notice costs 33
-     * characters. Added ON TOP of the bound, a 191-character line at 180 rendered as 213 — larger
-     * for having been cut, and missing its end. 0.18.1 fixed that by declining to cut at all, which
-     * left the reader 191 characters where 180 were asked for.
+     * THE DEFECT A LIVE RUN FOUND, AND THE ONE INVARIANT BOTH BUDGETS KEEP. The notice costs 33
+     * characters, so a 191-character line at a content bound of 180 would render as 213 — larger for
+     * having been cut, and missing its end. Neither method will do that.
      *
-     * <p>Reserved OUT OF the bound instead, the same line cuts to 147 plus a 33-character notice:
-     * exactly the 180 requested, smaller than the 191 it replaced, and the reader is told the size
-     * of what is missing. Declining was the right fix for the wrong shape.
+     * <p>They differ in what they do instead. A content bound declines the cut and hands back all
+     * 191. A hard cap has room to pay for the notice out of its own budget, so it cuts to 147 plus
+     * 33 and fits inside the 180 it was given.
      */
     @Test
-    void aCutResultIsAlwaysSmallerThanWhatItReplaced() {
+    void aCutResultIsNeverLargerThanWhatItReplaced() {
         String justOver = "y".repeat(191);
 
-        Retained kept = Retained.head(justOver, 180);
-
-        assertEquals(180, kept.text().length(), "exactly the budget, not the budget plus a notice");
-        assertTrue(kept.text().length() < justOver.length(), "and smaller than what it replaced");
-        assertTrue(kept.cut(), "which is a cut, and it says so");
+        assertEquals(justOver, Retained.head(justOver, 180).text(),
+                "180 of content plus a 33-character notice is 213, which is bigger than the 191 it "
+                        + "replaced and would have lost the end of the line to say so");
+        assertEquals(180, Retained.within(justOver, 180).text().length(),
+                "under a hard cap the same line fits, because the notice comes out of the budget");
     }
 
     /** When even the notice will not fit, there is nothing to gain and the text comes back whole. */
@@ -64,24 +77,33 @@ class WhatWeKeptAndWhatWeOmittedIsOneQuestionTest {
     void aBudgetTooSmallForTheNoticeKeepsTheTextWhole() {
         String text = "y".repeat(191);
 
-        Retained kept = Retained.head(text, 20);
+        Retained kept = Retained.within(text, 20);
 
-        assertEquals(text, kept.text(), "a 33-character notice inside a budget of 20 would leave no "
+        assertEquals(text, kept.text(), "a 33-character notice inside a cap of 20 would leave no "
                 + "room for any of the text, so the replacement would be all notice and no content");
         assertFalse(kept.cut(), "and it does not claim a cut it did not make");
     }
 
-    /** A result that has already been cut is a result: running the rule again must be a no-op. */
+    /**
+     * IDEMPOTENCE BELONGS TO THE HARD CAP AND NOT TO THE CONTENT BOUND, and that is not a defect in
+     * either — it falls out of what each one promises. {@link Retained#within} returns at most the
+     * cap, so a second pass sees something already inside it and does nothing. {@link Retained#head}
+     * returns the budget PLUS a notice, which is by construction over the budget, so a second pass
+     * cuts again and keeps cutting.
+     *
+     * <p>It does not bite the callers here, which each cut once from raw text. It would bite a
+     * caller that folded the rule over its own output, and that is worth knowing before they do.
+     */
     @Test
-    void aSecondPassOverACutResultChangesNothing() {
-        Retained once = Retained.head("z".repeat(9_000), 500);
-        assertTrue(once.cut(), "the first pass cut it");
+    void aSecondPassChangesNothingUnderAHardCapAndKeepsCuttingUnderAContentBound() {
+        Retained capped = Retained.within("z".repeat(9_000), 500);
+        assertEquals(capped.text(), Retained.within(capped.text(), 500).text(),
+                "already inside the cap, so there is nothing left to do");
 
-        Retained twice = Retained.head(once.text(), 500);
-
-        assertEquals(once.text(), twice.text(), "every result is strictly smaller than its input, "
-                + "so a second pass has nothing left to do");
-        assertFalse(twice.cut());
+        Retained bounded = Retained.head("z".repeat(9_000), 500);
+        assertTrue(Retained.head(bounded.text(), 500).cut(),
+                "content plus a notice is over the content bound by the width of the notice, so "
+                        + "folding this one over its own output never settles");
     }
 
     /**
@@ -113,8 +135,7 @@ class WhatWeKeptAndWhatWeOmittedIsOneQuestionTest {
     void whatWasOmittedIsAFactAboutTheBudgetAndSaysHowMuch() {
         Retained kept = Retained.head("y".repeat(1_000), 200);
 
-        assertEquals(new Retained.Omitted.Exact(1_000 - (200 - " ... (truncated, total 1000 chars)"
-                .length())), kept.omitted(), "the count is what did not fit, not what was wrong "
+        assertEquals(new Retained.Omitted.Exact(800), kept.omitted(), "the count is what did not fit, not what was wrong "
                 + "with the input: a permission failure or an unreadable file is somebody else's "
                 + "field, and folding it in here is the mistake this naming most invites");
         assertTrue(kept.text().contains("total 1000 chars"), "and the reader is told the whole size");

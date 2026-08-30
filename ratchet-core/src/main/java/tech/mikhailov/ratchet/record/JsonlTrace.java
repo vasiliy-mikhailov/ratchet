@@ -393,19 +393,12 @@ public final class JsonlTrace implements Trace, ToolWatching {
      */
     private static String one(Telling telling, String kind, String text) {
         String flat = text.replace("\\n", " ").replace('\n', ' ').strip();
-        int room = telling.room(kind, flat);
-        if (flat.length() <= room) {
-            return flat;
-        }
-        String cut = flat.substring(0, Math.max(0, room))
-                + " ... (truncated, total " + flat.length() + " chars)";
-        // A CUT THAT MAKES THE LINE LONGER IS NOT A CUT. The marker costs 33 characters, so a line
-        // that overruns the bound by less than that comes back BIGGER for having been clipped —
-        // measured on a real record: a 191-character line at a bound of 180 rendered as 213. The
-        // summary paid more to say what it withheld than keeping it would have cost, and the reader
-        // lost the end of the line for nothing. Found by running a consumer against a live model
-        // rather than by any test here, because no fixture had a line inside the marker's width.
-        return cut.length() < flat.length() ? cut : flat;
+        // ONE IMPLEMENTATION, AND IT IS NO LONGER THIS ONE'S. Retained reserves the notice out of
+        // the budget rather than adding it on top — which is why a 191-character line at a bound of
+        // 180 used to come back as 213, larger for having been cut — and it cuts on code point
+        // boundaries, where this split surrogate pairs and produced rows that could not be encoded
+        // and so were never written at all.
+        return Retained.head(flat, Math.max(1, telling.room(kind, flat))).text();
     }
 
     /** A field out of a written row, without parsing JSON the writer already knows the shape of. */

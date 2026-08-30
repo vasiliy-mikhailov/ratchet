@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import tech.mikhailov.ratchet.flow.Agent;
+import tech.mikhailov.ratchet.record.Retained;
 import tech.mikhailov.ratchet.record.Telling;
 import tech.mikhailov.ratchet.record.ToolWatching;
 
@@ -288,10 +289,6 @@ public final class Asking implements Agent {
     }
 
     private String shortened(String kind, String text) {
-        int room = watched.room(kind, text);
-        return text.length() <= room
-                ? text
-                : text.substring(0, Math.max(0, room)) + "... (truncated, total " + text.length()
-                        + " chars)";
+        return Retained.head(text, Math.max(1, watched.room(kind, text)), "").text();
     }
 }

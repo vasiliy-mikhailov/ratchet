@@ -17,6 +17,8 @@ package tech.mikhailov.ratchet.llm;
  * things and only the body distinguishes them — which mattered here, where an unknown request field
  * is dropped silently by one hop and rejected by the next.
  */
+import tech.mikhailov.ratchet.record.Retained;
+
 public final class Refused extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
@@ -42,6 +44,10 @@ public final class Refused extends RuntimeException {
 
     private static String shortened(String said) {
         String flat = said.strip().replaceAll("\\s+", " ");
-        return flat.length() <= 300 ? flat : flat.substring(0, 300) + "…";
+        // IT SAYS HOW MUCH NOW. This wrote a bare ellipsis — the one marker here that told a
+        // reader something was missing and refused to say how much, which is the censoring shape
+        // that let a record's own bound go unmeasured for eight releases. body() keeps the whole
+        // thing either way, so a magnitude is what makes that recoverable rather than a guess.
+        return Retained.head(flat, 300).text();
     }
 }

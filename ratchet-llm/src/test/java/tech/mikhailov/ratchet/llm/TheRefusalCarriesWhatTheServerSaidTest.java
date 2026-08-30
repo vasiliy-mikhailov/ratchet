@@ -156,14 +156,18 @@ class TheRefusalCarriesWhatTheServerSaidTest {
         String message = new Refused(502, pageOfHtml).getMessage();
 
         assertFalse(message.contains("\n"), "one line, or the record stops being one row per event");
-        assertTrue(message.endsWith("…"), "and it says it was cut: " + message);
+        assertTrue(message.endsWith("(truncated, total 7799 chars)"),
+                "and it says HOW MUCH it cut. This wrote a bare ellipsis, the one marker in this "
+                        + "library that told a reader something was missing and refused to say how "
+                        + "much — body() keeps the whole thing, so a magnitude is what makes that "
+                        + "recoverable rather than a guess: " + message);
         assertTrue(message.startsWith(
                         "the endpoint refused the request: HTTP 502 — <html> <body> <h1>502 Bad"),
                 "flattened first and then cut, so the 300 characters kept are 300 of the page "
                         + "rather than 300 of its indentation: " + message);
-        assertEquals(346, message.length(),
-                "39 characters of preamble, the status, the dash, 300 of the page and the ellipsis "
-                        + "— that is the whole bound, and it does not move with the size of the page");
+        assertEquals(45 + 300 + " ... (truncated, total 7799 chars)".length(), message.length(),
+                "the preamble, 300 characters of the page, and a notice carrying the total — and "
+                        + "only the total's own digits move with the size of the page");
     }
 
     @Test
@@ -177,10 +181,14 @@ class TheRefusalCarriesWhatTheServerSaidTest {
         assertEquals("the endpoint refused the request: HTTP 413 — " + fits,
                 new Refused(413, fits).getMessage(),
                 "300 is the last length that is kept whole");
-        assertFalse(new Refused(413, fits).getMessage().contains("…"),
+        assertFalse(new Refused(413, fits).getMessage().contains("truncated"),
                 "nothing was dropped, so nothing may claim it was");
-        assertTrue(new Refused(413, oneMore).getMessage().endsWith("x".repeat(300) + "…"),
-                "and 301 is the first that is not");
+        // ONE CHARACTER OVER IS NOT CUT, because the notice costs 33 and cutting to 300 would
+        // render 334 — larger than the 301 it replaced, and missing its end. The bound is a
+        // readability bound, not a hard cap, so the rule is that a cut must save something.
+        assertEquals("the endpoint refused the request: HTTP 413 — " + oneMore,
+                new Refused(413, oneMore).getMessage(),
+                "301 is one character over and cutting it would cost 33 to save one");
     }
 
     @Test

@@ -3,6 +3,7 @@ package tech.mikhailov.ratchet.llm;
 import java.util.HashMap;
 import java.util.Map;
 
+import tech.mikhailov.ratchet.record.Retained;
 import tech.mikhailov.ratchet.record.Trace;
 
 /**
@@ -47,8 +48,11 @@ public final class Reasoning {
         private static final long serialVersionUID = 1L;
 
         LoopDetected(String line, int times) {
+            // A CUT WITH NO MARKER AT ALL, in the diagnostic for a runaway, where the repeated
+            // line is the whole evidence. A reader could not tell ninety characters OF a line from
+            // a line ninety characters long.
             super("reasoning repeated a line " + times + " times: "
-                    + line.substring(0, Math.min(90, line.length())));
+                    + Retained.head(line, 90).text());
         }
     }
 
