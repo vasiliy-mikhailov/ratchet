@@ -36,35 +36,11 @@ import tech.mikhailov.ratchet.record.ToolWatching;
  */
 public final class Asking implements Agent {
 
-    /**
-     * TWENTY-FIVE ROUNDS, AND THE TWENTY-SIXTH THROWS. THE NUMBER AND ITS SHAPE ARE BOTH PRESERVED.
-     *
-     * <p>Neither was invented here. The jar this replaces passed exactly 25, and its loop had a
-     * particular shape that the round count alone does not describe: the first response is fetched
-     * BEFORE the loop, and each pass decrements a counter and throws at zero BEFORE testing whether
-     * the response even asked for a tool. So at most 25 responses are processed, an answer is
-     * returned only if it arrives as the twenty-fifth or earlier, and the twenty-sixth response is
-     * fetched and thrown away. Confirmed against the bytecode of {@code ToolService} rather than
-     * from its documentation, because this is the kind of contract a minor version changes quietly.
-     *
-     * <p>IT BINDS, AND IT BINDS OFTEN. That exact message appears 60,173 times in one corpus's own
-     * record, and in one results tree 59 of 208 runs hit it at least once. Both callers catch the
-     * RuntimeException, record "unreachable" against the agent, and re-ask the whole question
-     * through the thinking-off retry model, so every firing costs a second conversation. The bound
-     * counts ROUNDS and not calls, despite its name: one assistant message asking for five tools
-     * costs one, and the busiest recorded conversation fitted 465 calls inside this budget.
-     *
-     * <p>THE WASTED TWENTY-SIXTH CALL IS NOW VISIBLE AND IS STILL MADE. It costs a whole model
-     * response, on a conversation that is by then at its longest, and this library can finally see
-     * it. Changing it is a change to what more than a quarter of runs do, and doing that silently
-     * while removing a dependency is exactly how a migration hides a regression. It is a decision to
-     * take deliberately and measure.
-     */
-    private static final int MAX_ROUNDS = 25;
-
-    /** What a listener is shown of an argument or a result. It is for watching, not for the record. */
-    /** How much of a call and its answer the watcher is shown. See {@link Telling}. */
+    /** How much of a call and its answer the watcher is shown. It is for watching, not the record. */
     private final Telling watched;
+
+    /** What this agent may spend before it is told it will not finish. See {@link Budget}. */
+    private final Budget budget;
 
     private final Chat model;
     private final String systemPrompt;
@@ -82,7 +58,7 @@ public final class Asking implements Agent {
      */
     public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
                   ToolWatching listener) {
-        this(model, systemPrompt, tools, label, listener, Telling.upTo(8_000));
+        this(model, systemPrompt, tools, label, listener, Telling.upTo(8_000), Budget.shipped());
     }
 
     /**
@@ -99,6 +75,18 @@ public final class Asking implements Agent {
      */
     public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
                   ToolWatching listener, Telling watched) {
+        this(model, systemPrompt, tools, label, listener, watched, Budget.shipped());
+    }
+
+    /**
+     * THE SAME, WITH WHAT THE AGENT MAY SPEND CHOSEN BY THE CALLER.
+     *
+     * <p>The door that replaces a private {@code MAX_ROUNDS = 25}. See {@link Budget} for why the
+     * unit changed as well as the number.
+     */
+    public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
+                  ToolWatching listener, Telling watched, Budget budget) {
+        this.budget = budget == null ? Budget.shipped() : budget;
         this.watched = watched == null ? Telling.upTo(8_000) : watched;
         this.model = model;
         this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
@@ -130,8 +118,18 @@ public final class Asking implements Agent {
      *
      * <p>A model that ends its turn with tool calls and no content answers nothing at all, and that
      * is an empty judgement rather than a failure: {@link Insisting} is what reads it as one and
-     * asks again. Throws whatever the model call or the round bound throws, which callers catch and
-     * record rather than let end the run.
+     * asks again.
+     *
+     * <p>THE LOOP RUNS UNTIL THE MODEL STOPS ASKING FOR TOOLS, OR THE CALLER'S {@link Budget} IS
+     * SPENT. The 25 rounds that stood here was inherited from the jar this library replaced rather
+     * than chosen, counted rounds rather than calls, and stopped more than a quarter of runs from
+     * finishing; the same task family completes in a couple of hours against a loop with no round
+     * bound at all, on this same model.
+     *
+     * <p>Two things throw {@link Exhausted}, and they say different things. A spent budget means
+     * this agent cost more than the caller allowed. Two turns in a row cut off mid tool call means
+     * the CONVERSATION no longer fits, so asking for less cannot help — which is a fact about the
+     * context window rather than about the work, and is what compaction will remove.
      */
     @Override
     public String run(String task) {
@@ -140,21 +138,10 @@ public final class Asking implements Agent {
         conversation.add(Said.user(task));
 
         Reply reply = model.answer(new Ask(conversation, advertised, label));
-        int left = MAX_ROUNDS;
+        int wallHits = 0;
+        int turns = 1;
+        long spent = reply.spend().prompt() + reply.spend().completion();
         while (true) {
-            // BEFORE THE TOOL TEST, not after it. See MAX_ROUNDS: this ordering is the whole
-            // difference between an answer on the twenty-fifth round being returned and being lost.
-            if (left-- == 0) {
-                // A TYPE, SO THE RETRY CAN REFUSE IT. This was a bare IllegalStateException, and
-                // transportFailures() retries what it does not recognise — deliberately, since the
-                // cost of retrying something hopeless is one bounded sequence. That reasoning does
-                // not hold here: the retry re-runs all twenty-five rounds from nothing, so ten
-                // attempts is two hundred and fifty rounds of model calls to reach the same wall.
-                // The message is unchanged and the type still extends IllegalStateException, so
-                // every caller that catches this keeps catching it.
-                throw new Exhausted("Something is wrong, exceeded " + MAX_ROUNDS
-                        + " sequential tool executions");
-            }
             // BEFORE wantsTools(), WHICH IS FALSE HERE AND WOULD END THE AGENT. Wire refuses a call
             // cut in half by the token wall, so the turn asked for a tool and has none to run. Left
             // to the check below, that reads as an ordinary answer and returns whatever prose the
@@ -163,13 +150,41 @@ public final class Asking implements Agent {
             // The turn is kept, without its calls, and the model is told what happened. Nothing is
             // thrown: the lane continues, which is the point.
             if (reply.cutMidCall()) {
+                // THE ONLY BOUND LEFT, AND IT BOUNDS THE DEAD END RATHER THAN THE WORK.
+                //
+                // Asking for less works when one turn was greedy. It cannot work when the
+                // CONVERSATION is at the wall, because every turn from then on is cut in the same
+                // place however small the ask — so this would spin, telling a model to be shorter
+                // that has no room to be shorter in. Twice is enough to tell those apart: once is a
+                // greedy turn, twice in a row is a context that no longer fits.
+                //
+                // It says the true cause. The bound it replaces said "exceeded 25 sequential tool
+                // executions", which was never why the work stopped: 25 was inherited from the jar
+                // this library replaced, it counted rounds and not calls — one turn asking for five
+                // tools cost one, and the busiest recorded conversation fitted 465 calls inside it —
+                // and it fired 60,173 times in one corpus, on 59 of 208 runs, each firing costing a
+                // second whole conversation through the re-ask. The same task family completes in
+                // hours against a loop with no round bound at all, on this same model. A cap that
+                // stops a quarter of runs from finishing is not protecting anyone from a runaway.
+                //
+                // What actually bounds an agent is context, and the answer to context is compaction,
+                // which is SPEC-context.md section 5 and not yet built. Until it is, this reports
+                // the wall honestly instead of blaming a round count for it.
+                if (++wallHits >= 2) {
+                    throw new Exhausted("the conversation no longer fits: two turns in a row were "
+                            + "cut off mid tool call, so asking for less cannot help. Compact the "
+                            + "history, shorten the system prompt, or raise the context window.");
+                }
                 conversation.add(Said.assistant(reply.said(), List.of()));
                 conversation.add(Said.user("That turn ran out of room while writing "
                         + reply.dropped() + (reply.dropped() == 1 ? " tool call" : " tool calls")
                         + ", so it was not sent. Ask for less in one call, or split the work."));
                 reply = model.answer(new Ask(conversation, advertised, label));
+                turns++;
+                spent += reply.spend().prompt() + reply.spend().completion();
                 continue;
             }
+            wallHits = 0;
             if (!reply.wantsTools()) {
                 return reply.said();
             }
@@ -177,7 +192,25 @@ public final class Asking implements Agent {
             for (Called call : reply.calls()) {
                 conversation.add(Said.result(call, ran(call)));
             }
+            // THE CALLER'S CEILING, ON WHAT IS ACTUALLY SPENT. A model that never stops asking
+            // for tools is a real failure and nothing else here catches it: the wall guard above
+            // fires only on a truncation, and a scripted model — or a real one calling a cheap tool
+            // that returns almost nothing — never truncates at all. Removing the round cap without
+            // this put a test JVM into an infinite loop and killed it with a heap error, which is
+            // the clearest argument for the bound existing that anyone offered.
+            //
+            // CHECKED HERE, AFTER THE TOOLS RAN AND BEFORE ANOTHER TURN IS PAID FOR. At the top of
+            // the loop it would refuse a turn already fetched — which is exactly the waste the
+            // bound it replaces was criticised for: 25 rounds meant the twenty-sixth answer was
+            // bought, on the longest conversation of the run, and thrown away unread.
+            if (budget.spent(spent, turns)) {
+                throw new Exhausted("this agent spent " + spent + " tokens over " + turns
+                        + " turns without finishing, which is past what the caller allowed. Raise "
+                        + "the Budget, or look at what it is repeating.");
+            }
             reply = model.answer(new Ask(conversation, advertised, label));
+            turns++;
+            spent += reply.spend().prompt() + reply.spend().completion();
         }
     }
 

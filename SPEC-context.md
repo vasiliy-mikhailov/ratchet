@@ -4,6 +4,21 @@ A specification for ratchet 0.19–0.22. It has one principle and five pieces.
 
 > **Truncate the view, never the record, and make the view's link to the record explicit.**
 
+And one prior constraint on all of it, which decides what belongs here at all:
+
+> **The harness is smarter than the library. Don't lose, don't lie, don't decide.**
+
+A harness has a human watching, an abort signal, a session and the whole process. ratchet is called
+from inside somebody else's program and knows nothing about it — not the corpus, not the tools, not
+the context window, not whether anyone is watching. Every defect a consumer reported this week was
+this library deciding something that was not its to decide: when work should stop, what was worth
+keeping, what silence meant, what a verdict looked like. Each was reasonable to whoever wrote it and
+wrong for a caller they had not met.
+
+So the test for anything below is: **does it need to know something only the caller knows?** If it
+does, it is a seam and not a feature. If a consumer could have written it themselves given the right
+hook, give them the hook.
+
 Every bound this library shipped before 0.16 broke that rule in the same direction: it cut at the
 moment of *writing*, where the information is still available and nobody yet knows what will be
 needed. `Keeping` and `Telling` moved the decision to the caller. This moves it to the point of
@@ -66,70 +81,73 @@ Three independent implementations agree on every choice here — dsh's assembler
 `Model.whole`, and this. The guard asks *was this finished*, where the old one asked *is there
 anything to act on*.
 
-## 3. `Spill` — the whole thing stays, addressable
+## 3. Somewhere to put the rest — a seam, not a store
+
+A tool result over its cap is not cut and thrown away. But **ratchet must not own the store**: where
+the whole text goes is a fact about the caller's filesystem, session and retention, none of which
+this library can see. So it owns the shape of the notice and nothing else.
 
 ```java
-public interface Spill { Locator save(String whole); }
+public interface Spilling { String kept(String whole, int room); }   // returns preview + locator
 ```
 
-A tool result over its cap is not cut. The full text is saved and the model-facing result becomes
-preview + magnitude + **locator** + **retrieval hint**:
+`Recording` already takes the cap. What it lacks is a way for the caller to say *and here is where I
+put the rest*. Given that, the model-facing result becomes preview + magnitude + locator + retrieval
+hint, and the whole text lives wherever the harness decided:
 
 ```
 (Omitted 41208 bytes. Full formatted result stored at: /…/session-…/a1b2c3d4e5f6-web_fetch.txt.
  Use read with offset/limit, or grep this path to search within it.)
 ```
 
-Ratchet's markers carry magnitude and nothing else. Three have since 0.2.0 or 0.15.0; `Trace.happened`'s
-gained one only in 0.16.1; `Refused`'s still has none. A magnitude tells a reader something is
-missing. A locator lets them go and get it.
+A magnitude tells a reader something is missing; a locator lets them go and get it. `Refused` still
+has neither.
 
-Skip `read` results when spilling, or a `read → spill → read again` loop follows.
+Skip `read` results, or a `read → spill → read again` loop follows. That rule is the harness's too,
+but it is worth writing down because both implementations that got here first had to learn it.
 
-## 4. Tools — what makes a locator real
+## 4. Tools — not ratchet's, and that is the finding
 
-A locator nothing can visit is a longer way of saying "truncated". `read` with offset/limit and
-`grep` are the minimum for (3) to function at all.
+A locator nothing can visit is a longer way of saying "truncated". So (3) needs `read` with
+offset/limit and `grep` to be worth anything — **and neither belongs here.** `Tool` is three strings
+and this library ships none, deliberately: the loop must not decide what a caller's agent can do.
 
-Ratchet ships no tools, deliberately: the loop must not decide what a caller's agent can do. But
-every caller then guesses the same list, and there is now a measured answer to that guess —
-`TOOLS-2026-08-30.md`, from 816 calls across six runs. Read its caveat: the runs were not controlled
-against each other, so it is evidence of *which tools get reached for*, not a ranking to tune
-against.
+What was missing is not a module but an answer. Every caller guesses the same list, and there is now
+a measured one — `TOOLS-2026-08-30.md`, 816 calls across six runs, with its own caveat that the runs
+were uncontrolled and it is evidence of *which tools get reached for* rather than a ranking to tune
+against. Reference it from the README. Do not ship it as code.
 
-This is an opt-in module, not a change to the loop.
+## 5. Compaction — the policy is the harness's; the seam is ours
 
-## 5. Compaction — and the thing ratchet does not have
+Everything about *when* and *what* to compact needs things ratchet cannot see: the route's real
+context window, which results are cheap to re-fetch, whether a human is watching. dsh resolves
+capacity from its own adapter and prices the whole envelope at every step boundary. A library called
+from inside somebody else's program has none of that.
 
-Staged, and the free stage does nearly all of it. Measured over one 4.1 MB session: **eleven
-compaction cycles, one summarization, 788 prune marks.** Ten of eleven absorbed model-free.
+**So ratchet does not compact. It makes the conversation compactable**, which is the one thing only
+it can do, because only it holds the list:
 
-1. Price the envelope against the *route's* real capacity, resolved from the endpoint, not a constant.
-   Compact at `0.8`; retain `0.16` verbatim.
-2. Prune oversized tool results — model-free, no LLM call. `8192 → 4096 head + marker + 1024 tail`.
-3. Remeasure. **If pressure is safe, stop.** Summarization is the exception.
-4. Only then summarize the oldest whole units, preserving a recent tail.
+- the conversation is addressable between turns, not a private `List<Said>` discarded at the end
+- a caller can read it and hand back a replacement before the next request
+- tool-pairing boundaries are exposed, so a caller can find an edge where no unanswered call
+  crosses — **never cut a call from its result**, which is the shape that poisons a conversation and
+  can wedge a server's parser
+- what was replaced stays in the record, linked to what replaced it
 
-**Never cut a tool call from its result.** Edges snap to a boundary where no unanswered call
-crosses. This is a hard requirement: an orphaned call is the shape that poisons a conversation and
-can wedge a server's parser.
+That is a seam, and it is small. What sits on top of it — prune tool results free first, remeasure,
+summarize only if still over, retain a recent tail — is the harness's policy, and dsh's numbers are
+there to be copied by whoever writes one: eleven compaction cycles, one summarization, 788 prune
+marks over a 4.1 MB session. Ten of eleven absorbed with no model call at all.
 
-**The prerequisite.** All of the above assumes a *surface* — a rewritable view — over a *log* that
-keeps everything, with each replacement carrying its source range. Ratchet has no conversation store
-at all: `Asking` builds a `List<Said>` in memory and discards it. `Journal` holds per-node answers;
-`JsonlTrace` holds a `Keeping`-bounded *summary* of exchanges. Neither is the conversation.
-
-So compaction is not a feature that can be added to `Asking`. It requires ratchet to keep the
-conversation append-only first, with the surface as a view over it. That is a larger change than
-the other four together, and it is the decision that shapes (3) and (4).
-
----
+**The prerequisite is still real and still ours.** `Asking` builds a `List<Said>` in memory and
+discards it; `Journal` holds per-node answers and `JsonlTrace` a bounded summary. Neither is the
+conversation. Until it is kept, there is nothing for a harness to compact.
 
 ## Order
 
-**1 and 2 first** — small, and 1 blocks everything after it. **4 before 3**, because spill without a
-reader hands the model an address it cannot visit. **5 last**, and only after its storage shape is
-settled.
+**1 and 2 are done** (0.19). **5's seam next**, because it is the only piece here that nobody else
+can build and everything else is more useful once the conversation is addressable. **3 after it.**
+**4 is a README link, not code.**
 
 ## Out of scope
 

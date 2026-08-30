@@ -9,43 +9,48 @@ import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
 
+import tech.mikhailov.ratchet.record.Telling;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * THE BOUND IS PART OF THE PROGRAM, so it is asserted rather than described.
+ * WHAT BOUNDS AN AGENT IS THE CALLER'S, so it is asserted rather than described.
  *
- * <p>{@link Asking} caps an agent at twenty-five rounds because the harness it replaced did, and
- * that cap fires on more than a quarter of the runs in one corpus's own record: the agent loses its
- * final message and the whole question is re-asked. Raising or lowering it changes what a large
- * share of runs do, so it is written down here where a change to it goes red rather than
- * unnoticed.
+ * <p>{@link Asking} used to cap an agent at twenty-five rounds because the harness it replaced did.
+ * That cap fired on 59 of 208 runs in one corpus, discarding the conversation and re-asking the
+ * whole question, and it counted ROUNDS rather than calls — so twenty-five turns of an edit
+ * returning two hundred characters and twenty-five of a grep returning megabytes were the same
+ * number to it. The same task family finishes in a couple of hours against a loop with no round
+ * bound at all, on the same model.
+ *
+ * <p>IT IS A {@link Budget} NOW, AND IT IS THE CALLER'S. This library cannot see the corpus, the
+ * tools, the context window or whether anyone is watching, so it is not the thing that should be
+ * deciding when work stops. What it ships is a runaway guard set far above real work, and a door.
  *
  * <p>No model is reached. A {@link Chat} is one method, so the stub below is a function from the
  * {@link Ask} to the {@link Reply} the test needs, which is the only way to ask a loop about its
  * own arithmetic. It keeps every conversation it was shown, because half of what this class pins is
  * what the loop SENDS rather than what it returns.
  */
-class TheToolLoopStopsAtTwentyFiveRoundsTest {
+class TheToolLoopIsBoundedByWhatTheCallerAllowsTest {
 
     @Test
-    void aModelThatNeverStopsCallingToolsIsCutOffWithThatExactMessage() {
+    void aModelThatNeverStopsCallingToolsIsCutOffByWhatTheCallerAllowed() {
         AtomicInteger calls = new AtomicInteger();
         Scripted model = new Scripted(ask -> wanting(called("t")));
 
-        Asking asking = new Asking(model, "you are a test", one("ping", calls), "agent:test", null);
+        Asking asking = new Asking(model, "you are a test", one("ping", calls), "agent:test", null,
+                Telling.upTo(8_000), new Budget(0, 5));
 
         RuntimeException stopped = assertThrows(RuntimeException.class, () -> asking.run("go"));
-        assertTrue(stopped.getMessage().contains("exceeded 25 sequential tool executions"),
-                "the bound announces itself in the words the corpus already carries: "
+        assertTrue(stopped.getMessage().contains("without finishing"),
+                "it says what was spent rather than blaming a round count nobody chose: "
                         + stopped.getMessage());
-        // TWENTY-FIVE ROUNDS REALLY RAN. The tools executed and their effects are real; it is the
-        // twenty-sixth answer that is fetched and thrown away, which is why an agent cut off here
-        // has done its work and lost only the word for it.
-        assertEquals(25, calls.get(), "every round up to the bound executed its tools");
-        assertEquals(26, model.seen.size(), "and the twenty-sixth answer was paid for anyway");
+        assertEquals(5, calls.get(), "and it stopped where the caller said, not where a jar this "
+                + "library replaced happened to stop");
     }
 
     @Test
@@ -63,13 +68,12 @@ class TheToolLoopStopsAtTwentyFiveRoundsTest {
     }
 
     @Test
-    void anAnswerArrivingOnTheTwentyFifthRoundIsStillReturned() {
-        // THE BOUND IS NOT THE ONLY THING THE LOOP'S SHAPE DECIDES, and this is the near side of
-        // what the rest of it decides. The counter is tested BEFORE the answer is read, so which
-        // side of the boundary an answer falls on is settled by the order of two lines rather than
-        // by the number 25. This half says the twenty-fifth answer is inside the bound and comes
-        // back. It was the jar's shape before it was this loop's, and it was confirmed against that
-        // jar's bytecode rather than its documentation, so it is worth two tests to keep.
+    void anAnswerArrivingInsideTheBudgetIsReturned() {
+        // WHICH SIDE OF THE BOUNDARY AN ANSWER FALLS ON IS SETTLED BY THE ORDER OF TWO LINES, and
+        // that is still true even though the number is gone. The ceiling is now tested after the
+        // tools have run and before another turn is paid for, so an answer that arrives is read
+        // rather than bought and discarded — the waste the old bound was criticised for, where the
+        // twenty-sixth response was fetched on the longest conversation of the run and thrown away.
         AtomicInteger calls = new AtomicInteger();
         Scripted model = new Scripted(ask -> calls.get() < 24
                 ? wanting(called("t"))
@@ -78,47 +82,75 @@ class TheToolLoopStopsAtTwentyFiveRoundsTest {
         String answer = new Asking(model, "you are a test", one("ping", calls), "agent:test", null)
                 .run("go");
 
-        assertEquals("done", answer, "an answer on the twenty-fifth round is not lost");
+        assertEquals("done", answer, "the answer is what comes out, not an exception about a count");
         assertEquals(24, calls.get(), "twenty-four rounds of tools, and then the answer");
-        assertEquals(25, model.seen.size(), "which arrived on the twenty-fifth call");
+        assertEquals(25, model.seen.size(), "on the twenty-fifth call, which used to be the wall");
     }
 
+    /**
+     * THE BEHAVIOUR THIS RELEASE REMOVES. Round 26 used to be fetched and discarded: the answer
+     * arrived, was paid for, and was thrown away in favour of an exception naming a count. That
+     * fired on 59 of 208 runs in one corpus, each firing costing a second whole conversation.
+     */
     @Test
-    void anAnswerArrivingOneRoundLaterIsFetchedAndThrownAway() {
-        // THE FAR SIDE, AND THE EXPENSIVE ONE, which is what the corpus is actually full of: the
-        // model does answer, the answer is paid for on a conversation that is by then at its
-        // longest, and the round bound throws it away unread. That is why a cut-off agent has done
-        // all of its work and lost only the word for it, and why both callers re-ask the whole
-        // question. Moving the counter to the other side of the tool test would return this answer
-        // instead — a change no round count and no call count can see, which is why it is asserted
-        // from the boundary rather than from the middle.
+    void anAnswerArrivingPastTheOldRoundCapIsNoLongerThrownAway() {
         AtomicInteger calls = new AtomicInteger();
-        Scripted model = new Scripted(ask -> calls.get() < 25
-                ? wanting(called("t"))
-                : saying("done"));
+        Scripted model = new Scripted(ask -> calls.get() < 40 ? wanting(called("t")) : saying("done"));
 
-        Asking asking = new Asking(model, "you are a test", one("ping", calls), "agent:test", null);
+        String answer = new Asking(model, "you are a test", one("ping", calls), "agent:test", null)
+                .run("go");
 
-        RuntimeException stopped = assertThrows(RuntimeException.class, () -> asking.run("go"));
-        assertTrue(stopped.getMessage().contains("exceeded 25 sequential tool executions"),
-                "the answer that arrived is not what comes out: " + stopped.getMessage());
-        assertEquals(25, calls.get(), "twenty-five rounds of tools ran");
-        assertEquals(26, model.seen.size(), "and the answer was fetched before it was discarded");
+        assertEquals("done", answer, "forty rounds is ordinary work and used to be unreachable");
+        assertEquals(40, calls.get());
     }
 
+    /** The backstop is still per turn, so one turn asking for three tools costs one of it. */
     @Test
-    void theBoundCountsRoundsAndNotCalls() {
-        // ONE ASSISTANT MESSAGE ASKING FOR FIVE TOOLS COSTS ONE. The busiest conversation in the
-        // record fitted 465 calls inside this budget by batching, which is only possible because
-        // the counter moves once per answer.
+    void theBackstopCountsTurnsAndNotCalls() {
         AtomicInteger calls = new AtomicInteger();
         Scripted model = new Scripted(ask -> wanting(called("a"), called("b"), called("c")));
 
         assertThrows(RuntimeException.class,
-                () -> new Asking(model, "you are a test", one("ping", calls), "agent:test", null)
-                        .run("go"));
+                () -> new Asking(model, "you are a test", one("ping", calls), "agent:test", null,
+                        Telling.upTo(8_000), new Budget(0, 4)).run("go"));
 
-        assertEquals(75, calls.get(), "twenty-five rounds of three calls each");
+        assertEquals(12, calls.get(), "four turns of three calls each");
+    }
+
+    /**
+     * TOKENS ARE WHAT IS ACTUALLY SPENT, which is the unit the round count never was: twenty-five
+     * turns of an edit returning two hundred characters and twenty-five of a grep returning
+     * megabytes were the same number to it.
+     */
+    @Test
+    void aConsumerChoosesWhatAnAgentMaySpend() {
+        AtomicInteger calls = new AtomicInteger();
+        Scripted model = new Scripted(ask -> new Reply("", "", List.of(called("t")), Ending.TOOLS,
+                new Spend(400, 100)));
+
+        RuntimeException stopped = assertThrows(RuntimeException.class,
+                () -> new Asking(model, "you are a test", one("ping", calls), "agent:test", null,
+                        Telling.upTo(8_000), Budget.of(2_000)).run("go"));
+
+        assertTrue(stopped.getMessage().contains("tokens"), stopped.getMessage());
+        assertEquals(4, calls.get(), "five hundred a turn reaches two thousand on the fourth, and "
+                + "the fifth is never paid for — no turn is bought and discarded");
+    }
+
+    /**
+     * A SERVER THAT REPORTS NO USAGE CANNOT BE BOUNDED ON TOKENS, and Spend.NONE totals zero, which
+     * is indistinguishable from a free turn. Without the turn backstop this is an unfalsifiable
+     * check — the fourth this library would have shipped.
+     */
+    @Test
+    void aServerThatReportsNoUsageIsStillBounded() {
+        AtomicInteger calls = new AtomicInteger();
+        Scripted model = new Scripted(ask -> wanting(called("t")));
+
+        assertThrows(RuntimeException.class,
+                () -> new Asking(model, "you are a test", one("ping", calls), "agent:test", null,
+                        Telling.upTo(8_000), Budget.of(1_000_000)).run("go"),
+                "a million-token budget never fires against Spend.NONE; the backstop does");
     }
 
     @Test
