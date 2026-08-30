@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import tech.mikhailov.ratchet.record.JsonlTrace;
 import tech.mikhailov.ratchet.record.Telling;
@@ -92,6 +93,102 @@ class AConsumerOutsideThisPackageChoosesWhatTheSummaryTellsTest {
         assertTrue(cut.contains("(truncated, total 4000 chars)"),
                 "the size of the whole line, so a reader knows what is missing and which bound "
                         + "took it: " + cut);
+    }
+
+    // ---------------------------------------------------- navigating instead of being summarised
+
+    /**
+     * THE CALL THAT MAKES THE OTHER TWO SAFE RATHER THAN RECKLESS.
+     *
+     * <p>An agent told there are 1,400 events can decide to read forty. Unbounded reads are only
+     * dangerous when nobody knows the size first, which is why the count takes the same narrowing
+     * as the slice: a count from one narrowing and a slice from another would not line up.
+     */
+    @Test
+    void theCountAndTheSliceAgreeBecauseBothAreNarrowedTheSameWay(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.asked("planner", "p", "one");
+        trace.asked("doer", "p", "two");
+        trace.asked("doer", "p", "three");
+
+        assertEquals(3, trace.traceEvents("", ""), "all of them with no narrowing");
+        assertEquals(2, trace.traceEvents("", "doer"), "and the narrowing counts what it returns");
+        assertEquals(trace.traceEvents("", "doer"),
+                trace.traceSlice("", "doer", 0, 99).size(),
+                "the count is the size of the slice that asks for everything");
+    }
+
+    /** The point of the whole thing: the caller's range replaces the library's guess. */
+    @Test
+    void aSliceComesBackWholeWhereTheSummaryWouldHaveClippedIt(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.progress("", LONG);
+
+        assertEquals(LONG, trace.traceSlice("", "", 0, 1).get(0).text(),
+                "four thousand characters, none of them decided by this library");
+        assertFalse(trace.happened("", "", 10).contains(LONG),
+                "which the summary at its shipped bound would not have given them");
+    }
+
+    @Test
+    void anAgentCanWalkBackwardsFromTheEndWithoutDoingArithmetic(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.asked("a", "p", "one");
+        trace.asked("a", "p", "two");
+
+        assertEquals(2, trace.traceSlice("", "", -5, 900).size(),
+                "an out-of-range read is a question, not a fault");
+        assertEquals(List.of(), trace.traceSlice("", "", 900, 901),
+                "and past the end is empty rather than a throw");
+    }
+
+    /**
+     * A LITERAL SUBSTRING, AND THE REASON IS WHO WRITES THE PATTERN.
+     *
+     * <p>This is a model's input. A model-written regular expression over a 44,000-character row
+     * can backtrack for an unbounded time and Java gives no way to stop it.
+     */
+    @Test
+    void aSearchIsALiteralSubstringBecauseAModelWritesThePattern(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.asked("a", "p", "the parent pom is not published");
+
+        assertEquals(1, trace.traceFind("PARENT POM", "", "", 10).size(),
+                "case-insensitive, because a model does not match the record's casing");
+        assertEquals(List.of(), trace.traceFind("p.rent", "", "", 10),
+                "and a regular expression is not one: this is a literal and says so");
+    }
+
+    /**
+     * THE ONE PLACE THIS DIFFERS FROM THE PROPOSAL IT CAME FROM. The argument that a search bounds
+     * itself by being specific holds for a person and not for a model: a needle of "e" has named
+     * every row. The ceiling is the CALLER's, which is the difference between them bounding
+     * themselves and this library guessing on their behalf.
+     */
+    @Test
+    void aSearchKeepsTheNewestMatchesWhenItHitsTheCeilingTheCallerNamed(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.asked("a", "p", "first mention of maven");
+        trace.asked("a", "p", "second mention of maven");
+        trace.asked("a", "p", "third mention of maven");
+
+        List<Trace.Event> found = trace.traceFind("maven", "", "", 2);
+
+        assertEquals(2, found.size(), "the caller named two and got two");
+        assertEquals("third mention of maven", found.get(0).text(),
+                "newest first, because the most recent conclusion is the one that settles it");
+    }
+
+    /** happened flattens newlines into a ribbon. That is a rendering decision, not the record. */
+    @Test
+    void theStructureInsideARowSurvivesWhereTheSummaryFlattensIt(@TempDir Path dir) {
+        Trace trace = written(dir);
+        trace.asked("a", "p", "line one\nline two\tand a tab");
+
+        assertEquals("line one\nline two\tand a tab", trace.traceSlice("", "", 0, 1).get(0).text(),
+                "a caller reading a stack trace or a diff wants the structure that was in it");
+        assertFalse(trace.happened("", "", 10).contains("\n" + "line two"),
+                "while the summary still promises one line per event");
     }
 
     private static Trace written(Path dir) {

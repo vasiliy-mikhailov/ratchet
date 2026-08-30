@@ -262,6 +262,105 @@ public final class JsonlTrace implements Trace, ToolWatching {
     }
 
     /** One line, short enough that a hundred of them are still a summary. */
+    @Override
+    public int traceEvents(String stage, String agent) {
+        return scan(stage, agent).size();
+    }
+
+    @Override
+    public List<Trace.Event> traceSlice(String stage, String agent, int from, int to) {
+        List<Trace.Event> all = scan(stage, agent);
+        // CLAMPED RATHER THAN REFUSED. An agent walking backwards from the end should not have to
+        // do arithmetic to avoid an exception, and an out-of-range read is a question, not a fault.
+        int lo = Math.max(0, Math.min(from, all.size()));
+        int hi = Math.max(lo, Math.min(to, all.size()));
+        return List.copyOf(all.subList(lo, hi));
+    }
+
+    @Override
+    public List<Trace.Event> traceFind(String needle, String stage, String agent, int most) {
+        if (needle == null || needle.isBlank() || most < 1) {
+            return List.of();
+        }
+        String looking = needle.toLowerCase();
+        List<Trace.Event> all = scan(stage, agent);
+        List<Trace.Event> found = new ArrayList<>();
+        // NEWEST FIRST, because a search that hits the ceiling should keep the most recent matches
+        // rather than the oldest: what an earlier stage concluded most recently is what settles it.
+        for (int i = all.size() - 1; i >= 0 && found.size() < most; i--) {
+            if (all.get(i).text().toLowerCase().contains(looking)) {
+                found.add(all.get(i));
+            }
+        }
+        return List.copyOf(found);
+    }
+
+    /**
+     * THIS RUN'S ROWS, NARROWED, WHOLE, IN THE ORDER THEY HAPPENED.
+     *
+     * <p>The same key, stage and agent narrowing {@link #happened} uses, and deliberately the same
+     * bug fix: the bump field matched with its quotes, so a run whose key is a PREFIX of another's
+     * does not read that run's rows.
+     *
+     * <p>Positions are within the narrowing, which is why {@link #traceEvents} takes the same two
+     * arguments — a count from one narrowing and a slice from another would not line up.
+     */
+    private List<Trace.Event> scan(String stage, String agent) {
+        if (!Files.isReadable(trace)) {
+            return List.of();
+        }
+        List<Trace.Event> events = new ArrayList<>();
+        try (var rows = Files.lines(trace)) {
+            for (String row : rows.toList()) {
+                if (!row.contains("\"bump\":\"" + escape(key) + "\"")) {
+                    continue;
+                }
+                String kind = value(row, "kind");
+                String who = value(row, "agent");
+                String where = value(row, "stage");
+                if (!stage.isBlank() && !stage.equalsIgnoreCase(where)) {
+                    continue;
+                }
+                if (!agent.isBlank() && !agent.equalsIgnoreCase(who)) {
+                    continue;
+                }
+                String text = whole(row, kind);
+                if (text.isBlank()) {
+                    continue;
+                }
+                events.add(new Trace.Event(events.size(), kind, where, who, text));
+            }
+        } catch (IOException unreadable) {
+            return List.of();
+        }
+        return events;
+    }
+
+    /**
+     * WHAT A ROW CARRIED, UNFLATTENED AND UNCLIPPED.
+     *
+     * <p>{@link #value} replaces newlines and tabs with spaces because {@link #happened} promises
+     * one line per event. That is a RENDERING decision and it does not belong here: a caller
+     * reading a stack trace or a diff out of the record wants the structure that was in it.
+     * {@link Json#read} is what the row actually holds.
+     */
+    private static String whole(String row, String kind) {
+        return switch (kind) {
+            case "asked" -> Json.read(row, "reply");
+            case "applied" -> Json.read(row, "what");
+            case "tool" -> Json.read(row, "tool") + "(" + Json.read(row, "arguments") + ") -> "
+                    + Json.read(row, "result");
+            case "progress" -> Json.read(row, "note");
+            case "built" -> "[" + Json.read(row, "phase") + "] "
+                    + ("true".equals(Json.read(row, "infra")) ? "did not run" : "ran") + ": "
+                    + Json.read(row, "summary");
+            case "settled" -> Json.read(row, "state") + ": " + Json.read(row, "because");
+            case "thought" -> Json.read(row, "thinking");
+            case "priced" -> Json.read(row, "itemisation");
+            default -> "";
+        };
+    }
+
     /**
      * ONE LINE, AND AS MUCH OF IT AS THE CALLER ASKED FOR.
      *

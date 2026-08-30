@@ -1,5 +1,7 @@
 package tech.mikhailov.ratchet.record;
 
+import java.util.List;
+
 /**
  * EVERYTHING THAT HAPPENS, THROUGH ONE OBJECT.
  *
@@ -47,6 +49,84 @@ public interface Trace {
         // again. It is not raised here because a longer summary is paid by every consumer, and the
         // door below is what lets the one who measured it choose. See Telling.
         return happened(stage, agent, limit, Telling.upTo(180));
+    }
+
+    /**
+     * HOW MANY EVENTS THIS RUN HAS, WHICH IS THE CALL THAT MAKES THE REST SAFE.
+     *
+     * <p>{@link #happened} is a one-shot summary: it takes a line budget and a per-line budget,
+     * ranks, clips, and hands back a fixed lump. Every number in it is a guess made by the caller
+     * about what an agent will need BEFORE the agent has said what it needs. 180 was a bad guess
+     * and 8,000 is a better one; both are guesses, and both are paid on every call whether or not
+     * the agent wanted that line.
+     *
+     * <p>THESE THREE ARE NAVIGATION INSTEAD, so the agent sizes its own read and the bound stops
+     * being a number in this library. It becomes the range the caller asked for — the shape a file
+     * read already has, where nobody bounds the read because the reader named the file. An agent
+     * told there are 1,400 events can ask for forty of them; an agent that searches for one
+     * dependency has bounded itself by being specific.
+     *
+     * <p>THE NAMES ALL BEGIN WITH {@code trace} ON PURPOSE. A consumer exposes these to a model as
+     * tools, and the model already has {@code grep} and {@code read_file} pointed at a repository.
+     * A bare {@code grep} beside those is a collision that costs exactly the wasted calls this
+     * exists to remove — one consumer's corpus has 22,423 repository greps in it.
+     *
+     * <p>{@link #happened} stays, and stays the right call for "I have no idea what happened, show
+     * me the shape of it". It is no longer the only way in, and its bound is no longer load-bearing.
+     *
+     * @param stage narrows to one stage, or blank for all
+     * @param agent narrows to one agent, or blank for all
+     */
+    default int traceEvents(String stage, String agent) {
+        return 0;
+    }
+
+    /**
+     * EVENTS {@code from} UP TO BUT NOT INCLUDING {@code to}, WHOLE AND UNCLIPPED.
+     *
+     * <p>Indices are positions within the narrowing, so {@code traceSlice(stage, agent, 0, n)}
+     * pairs with {@code traceEvents(stage, agent)} and a walk backwards from the end is
+     * {@code traceSlice(s, a, count - 40, count)}. They are stable within a run because the record
+     * is append-only; they are NOT stable across a differently narrowed call, which is why the
+     * count comes from the same two arguments.
+     *
+     * <p>Out-of-range ends are clamped rather than refused: an agent walking backwards should not
+     * have to do arithmetic to avoid an exception.
+     */
+    default List<Event> traceSlice(String stage, String agent, int from, int to) {
+        return List.of();
+    }
+
+    /**
+     * EVENTS WHOSE TEXT CONTAINS {@code needle}, WHOLE, NEWEST FIRST, AT MOST {@code most} OF THEM.
+     *
+     * <p>A LITERAL SUBSTRING, CASE-INSENSITIVE, AND NOT A REGULAR EXPRESSION. The pattern here is
+     * written by a model, and a model-written regex over a 44,000-character row can backtrack for
+     * an unbounded time with no way to stop it from Java. A literal match cannot, and it is what a
+     * model asking "what did the earlier stage say about this dependency" actually wants.
+     *
+     * <p>{@code most} IS THE CALLER'S BOUND AND IT IS REQUIRED, which is the one place this differs
+     * from the proposal it came from. The argument that a search bounds itself by being specific
+     * holds for a person and not for a model: a needle of {@code "e"} has named every row. Naming a
+     * ceiling is the caller bounding itself rather than this library guessing, which is the whole
+     * point of the three.
+     */
+    default List<Event> traceFind(String needle, String stage, String agent, int most) {
+        return List.of();
+    }
+
+    /**
+     * ONE RECORDED EVENT, STRUCTURED, so a caller can filter without a regex over rendered text.
+     *
+     * <p>{@link #happened} flattens newlines into a ribbon and prefixes each row, which is a
+     * RENDERING decision. It should not be baked into the only way to read the record.
+     *
+     * @param at    position within the narrowing that produced it
+     * @param kind  {@code asked}, {@code tool}, {@code applied}, {@code progress}, {@code built},
+     *              {@code settled}, {@code thought} or {@code priced}
+     * @param text  the whole of what that row carried, unflattened and unclipped
+     */
+    record Event(int at, String kind, String stage, String agent, String text) {
     }
 
     /**
