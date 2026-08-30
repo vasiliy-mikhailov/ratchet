@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import tech.mikhailov.ratchet.flow.Agent;
+import tech.mikhailov.ratchet.record.Telling;
 import tech.mikhailov.ratchet.record.ToolWatching;
 
 /**
@@ -62,7 +63,8 @@ public final class Asking implements Agent {
     private static final int MAX_ROUNDS = 25;
 
     /** What a listener is shown of an argument or a result. It is for watching, not for the record. */
-    private static final int MAX_WATCHED = 8_000;
+    /** How much of a call and its answer the watcher is shown. See {@link Telling}. */
+    private final Telling watched;
 
     private final Chat model;
     private final String systemPrompt;
@@ -80,6 +82,24 @@ public final class Asking implements Agent {
      */
     public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
                   ToolWatching listener) {
+        this(model, systemPrompt, tools, label, listener, Telling.upTo(8_000));
+    }
+
+    /**
+     * THE SAME, WITH HOW MUCH THE WATCHER IS SHOWN CHOSEN BY THE CALLER.
+     *
+     * <p>{@code MAX_WATCHED} was a private literal here and a listener could not ask for more. It
+     * is the third bound in this library a consumer reported having no door to, after the record's
+     * and the summary's, and it is the one that collides with them: a consumer who asks the record
+     * to keep everything still got 8,000 here, and the two clips are not distinguishable from the
+     * record afterwards.
+     *
+     * <p>The kinds are {@code arguments} and {@code result}, so the call a tool was given and the
+     * answer it gave can be bounded apart.
+     */
+    public Asking(Chat model, String systemPrompt, Map<Tool, Calling> tools, String label,
+                  ToolWatching listener, Telling watched) {
+        this.watched = watched == null ? Telling.upTo(8_000) : watched;
         this.model = model;
         this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
         this.label = label == null || label.isBlank() ? "agent" : label;
@@ -175,16 +195,17 @@ public final class Asking implements Agent {
         if (listener != null) {
             // The listener is told "" for a null result; the model is told exactly what the tool
             // returned, null included, because that is what it returned.
-            listener.onToolInvocation(label, call.name(), null, shortened(call.arguments()),
-                    shortened(answered));
+            listener.onToolInvocation(label, call.name(), null,
+                    shortened("arguments", call.arguments()), shortened("result", answered));
         }
         return answered;
     }
 
-    private static String shortened(String text) {
-        return text.length() <= MAX_WATCHED
+    private String shortened(String kind, String text) {
+        int room = watched.room(kind, text);
+        return text.length() <= room
                 ? text
-                : text.substring(0, MAX_WATCHED) + "... (truncated, total " + text.length()
+                : text.substring(0, Math.max(0, room)) + "... (truncated, total " + text.length()
                         + " chars)";
     }
 }

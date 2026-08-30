@@ -41,6 +41,22 @@ public interface Trace {
      * what happened and gets an exception loses its turn.
      */
     default String happened(String stage, String agent, int limit) {
+        // 180 CHARACTERS A LINE, WHICH IS WHAT THIS METHOD HAS ALWAYS DONE. It is preserved
+        // rather than defended: a consumer measured it costing 83% of all bytes read in re-fetches,
+        // because an agent shown a stub of an earlier agent's tool result goes and reads the file
+        // again. It is not raised here because a longer summary is paid by every consumer, and the
+        // door below is what lets the one who measured it choose. See Telling.
+        return happened(stage, agent, limit, Telling.upTo(180));
+    }
+
+    /**
+     * THE SAME, WITH HOW MUCH OF EACH LINE SURVIVES CHOSEN BY THE CALLER.
+     *
+     * <p>The per-line bound was 180 characters, a private literal in {@link JsonlTrace} that no
+     * caller could reach — in the one method on this interface that has no caller inside this
+     * library at all. See {@link Telling} for what that cost the consumer who found it.
+     */
+    default String happened(String stage, String agent, int limit, Telling telling) {
         return "";
     }
 

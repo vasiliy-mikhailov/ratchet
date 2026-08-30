@@ -120,7 +120,7 @@ public final class JsonlTrace implements Trace, ToolWatching {
      * what was objected to and what a tool answered; the file itself keeps everything.
      */
     @Override
-    public String happened(String stage, String agent, int limit) {
+    public String happened(String stage, String agent, int limit, Telling telling) {
         if (!Files.isReadable(trace)) {
             return "";
         }
@@ -161,11 +161,14 @@ public final class JsonlTrace implements Trace, ToolWatching {
                     continue;
                 }
                 String line = switch (kind) {
-                    case "asked" -> "[" + who + "] answered: " + one(value(row, "reply"));
-                    case "applied" -> "[" + where + "] " + one(value(row, "what"));
+                    case "asked" -> "[" + who + "] answered: "
+                            + one(telling, kind, value(row, "reply"));
+                    case "applied" -> "[" + where + "] "
+                            + one(telling, kind, value(row, "what"));
                     case "tool" -> "[" + who + "] " + value(row, "tool") + "("
-                            + one(value(row, "arguments")) + ") -> " + one(value(row, "result"));
-                    case "progress" -> "* " + one(value(row, "note"));
+                            + one(telling, kind, value(row, "arguments")) + ") -> "
+                            + one(telling, kind, value(row, "result"));
+                    case "progress" -> "* " + one(telling, kind, value(row, "note"));
                     case "built" -> "[build " + value(row, "phase") + "] "
                             // READ, NOT GREPPED, AND THE GREP WAS WRONG. built() writes
                             // "infra":"true" — a quoted string, because of() takes String values —
@@ -177,7 +180,7 @@ public final class JsonlTrace implements Trace, ToolWatching {
                             // branch nothing can reach cannot be made to behave differently.
                             + ("true".equals(value(row, "infra")) ? "did not run" : "ran");
                     case "settled" -> "SETTLED " + value(row, "state") + ": "
-                            + one(value(row, "because"));
+                            + one(telling, kind, value(row, "because"));
                     default -> "";
                 };
                 if (!line.isBlank()) {
@@ -259,9 +262,19 @@ public final class JsonlTrace implements Trace, ToolWatching {
     }
 
     /** One line, short enough that a hundred of them are still a summary. */
-    private static String one(String text) {
+    /**
+     * ONE LINE, AND AS MUCH OF IT AS THE CALLER ASKED FOR.
+     *
+     * <p>This clipped at 180 characters, a literal no caller could reach, in a summary that is read
+     * into a prompt so that an agent need not rediscover what an earlier one established. At 180 it
+     * showed a stub of every answer and every tool result, and the consumer measured what that
+     * cost: 62% of their tool calls repeated an identical call and re-fetched 83% of all bytes
+     * read. See {@link Telling}.
+     */
+    private static String one(Telling telling, String kind, String text) {
         String flat = text.replace("\\n", " ").replace('\n', ' ').strip();
-        return flat.length() > 180 ? flat.substring(0, 180) + " ..." : flat;
+        int room = telling.room(kind, flat);
+        return flat.length() > room ? flat.substring(0, Math.max(0, room)) + " ..." : flat;
     }
 
     /** A field out of a written row, without parsing JSON the writer already knows the shape of. */
