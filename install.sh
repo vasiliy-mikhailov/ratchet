@@ -62,6 +62,15 @@ fi
 # WHERE TO PUT IT BACK. A detached HEAD left behind by a failed build is a worse outcome than the
 # failure, because the next person's `git pull` reports something baffling.
 was=$(git symbolic-ref -q --short HEAD || git rev-parse HEAD)
+# SAY SO WHEN THERE IS NO BRANCH TO GO BACK TO. Restoring to a SHA is not a failure and does not
+# trip the loud path below, so a checkout that arrives detached leaves detached, silently, and the
+# next commit lands somewhere nobody asked for. That happened during the 0.27.0 release: the commit
+# went onto a detached HEAD, the push was refused, and the fix was a fast-forward that could as
+# easily have been a lost commit.
+if ! git symbolic-ref -q HEAD >/dev/null; then
+    echo "install.sh: this checkout is on a DETACHED HEAD ($was) and will be left on one." >&2
+    echo "install.sh: 'git checkout main' first if you mean to commit afterwards." >&2
+fi
 # A FAILED RESTORE MUST BE LOUD. This was `git checkout -q "$was" 2>/dev/null || true`, which is
 # the silent-failure shape this repository exists to argue against, sitting in the recovery path
 # where it is least visible: if the checkout back fails for any reason, the reader is left on a
@@ -103,7 +112,12 @@ rm -f "$log"
 into=${repo:-$HOME/.m2/repository}
 number=${version#v}
 missing=""
-for module in ratchet-core ratchet-llm; do
+# ALL THREE, AND THIS CHECKED TWO OF THEM FROM 0.22.0 TO 0.27.0. ratchet-tools arrived as a third
+# module and this loop was not told, so for six releases the script that exists to prove "a consumer
+# can resolve it" was blind to a third of the library — and would have reported success for a build
+# that installed no tools jar at all. Exactly the shape of the defect the loop was written to catch,
+# in the loop written to catch it.
+for module in ratchet-core ratchet-llm ratchet-tools; do
     jar="$into/tech/mikhailov/ratchet/$module/$number/$module-$number.jar"
     [ -f "$jar" ] || missing="$missing $module"
 done
