@@ -52,8 +52,9 @@ public record Budget(long tokens, int rounds) {
      * The longest healthy agent turn measured in the field is 176 rounds and 476 calls, so a
      * thousand turns is roughly six times the worst real work anyone has reported. The token half
      * is sized the same way: that consumer's heaviest PHASE spends 3.6M across many {@code run()}s,
-     * and this bounds one {@code run()}, where they sit well under two million. These are numbers this library picked, so they are
-     * numbers a caller should be able to replace — hence {@link #of} and {@link #none()}.
+     * and this bounds one {@code run()}, where they sit well under two million. These are numbers
+     * this library picked, so they are numbers a caller should be able to replace — hence
+     * {@link #of} and {@link #none()}.
      */
     public static Budget shipped() {
         return new Budget(2_000_000L, 1_000);
