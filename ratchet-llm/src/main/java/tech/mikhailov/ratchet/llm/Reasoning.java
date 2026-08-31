@@ -57,6 +57,7 @@ public final class Reasoning {
     }
 
     private final Trace trace;
+    private final String agent;
     private final StringBuilder thinking = new StringBuilder();
     private final StringBuilder content = new StringBuilder();
     private final StringBuilder pending = new StringBuilder();
@@ -89,6 +90,17 @@ public final class Reasoning {
 
     /** A null trace is taken as {@link Trace#quiet()} here so nothing below has to ask again. */
     public Reasoning(Trace trace) {
+        this(trace, "");
+    }
+
+    /**
+     * The same, told which agent is speaking, so the row it writes can be narrowed to.
+     *
+     * <p>{@code Wire} knows this from the {@code Ask} and had it in scope the whole time; nothing
+     * was missing but the parameter to carry it.
+     */
+    public Reasoning(Trace trace, String agent) {
+        this.agent = agent == null ? "" : agent;
         this.trace = trace == null ? Trace.quiet() : trace;
     }
 
@@ -185,7 +197,7 @@ public final class Reasoning {
             // every successful response.
             if (thinking.length() > 0 || abandoned
                     || (content.length() == 0 && !finish.isBlank())) {
-                trace.thought(finish, thinking.toString(), content.toString());
+                trace.thought(agent, finish, thinking.toString(), content.toString());
             }
         } catch (RuntimeException unrecordable) {
             // A trace that cannot be written must never be why a run fails.

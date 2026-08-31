@@ -147,7 +147,35 @@ public interface Trace {
      * the runtime returns only the content: without this the thinking is paid for and discarded,
      * and an answer that ended mid-thought is indistinguishable from one that declined.
      */
+    /**
+     * @deprecated because it cannot say WHO thought it, and this interface's own read side filters
+     *             by exactly that. {@link Event} carries an {@code agent}, {@link #traceEvents} and
+     *             {@link #traceFind} narrow by it, and {@code thought} is the one writer that
+     *             structurally could not supply it — so every thought row was written unattributed
+     *             and silently missed every agent-narrowed read. Measured twice: 737 in one sweep
+     *             attributed to nobody, and a consumer whose nine agents all appeared in the record
+     *             as one. Use {@link #thought(String, String, String, String)}. Overriding only
+     *             this method still works and still loses the agent, which is why the compiler says
+     *             so here rather than leaving it to be found in a record months later.
+     */
+    @Deprecated(since = "0.25.0")
     void thought(String finishReason, String thinking, String content);
+
+    /**
+     * WHAT A GENERATION PRODUCED, AND WHICH AGENT PRODUCED IT.
+     *
+     * <p>The agent is not decoration. One client serves every agent in a flow, so a record that
+     * cannot attribute reasoning cannot answer the question anybody actually brings to it — which
+     * of them decided this — and the read side of this interface offers a narrowing that quietly
+     * matched nothing.
+     *
+     * <p>Defaults to the three-argument form so that no existing implementation breaks, which means
+     * an implementation that overrides only that one keeps today's behaviour exactly: no worse, and
+     * no better. Override THIS to write the agent down.
+     */
+    default void thought(String agent, String finishReason, String thinking, String content) {
+        thought(finishReason, thinking, content);
+    }
 
     /** A check that either passed or did not, under a named condition. The only arbiter here. */
     void built(String phase, Outcome result);

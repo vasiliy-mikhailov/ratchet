@@ -446,7 +446,20 @@ public final class JsonlTrace implements Trace, ToolWatching {
 
     @Override
     public void thought(String finishReason, String thinking, String content) {
-        write("thought", of("finish", finishReason, "thinking", thinking, "content", content));
+        thought("", finishReason, thinking, content);
+    }
+
+    /**
+     * THE AGENT GOES IN AS AN ORDINARY COLUMN, which is all it ever needed to be.
+     *
+     * <p>Every row is already read back through {@code value(row, "agent")} regardless of kind, so
+     * a thought row that carries the field is attributed by the existing reader with nothing else
+     * changed. The write side was the whole of the defect.
+     */
+    @Override
+    public void thought(String agent, String finishReason, String thinking, String content) {
+        write("thought", of("agent", agent, "finish", finishReason, "thinking", thinking,
+                "content", content));
     }
 
     @Override

@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.24.0</version>
+  <version>0.25.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.24.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.25.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -254,6 +254,16 @@ shape a missing type must be can only answer by finding every use site of a name
 **It is not a sandbox.** A root directory bounds the file tools and bounds nothing about `bash`,
 which runs as whoever runs the JVM. dsh ships four sandbox packages and a policy layer around its
 shell; this ships a working directory and says so.
+
+**A thought row says whose it is, from 0.25.0.** `Trace.Event` has always carried an `agent` and
+`traceEvents`/`traceFind` have always narrowed by it, but `thought` was the one writer that could
+not supply one — so every reasoning row was unattributed and silently missed every agent-narrowed
+read, which returns an empty list and reads exactly like an honest absence. Measured twice before it
+was fixed: 737 rows in one sweep attributed to nobody (written down in `Listening`'s own javadoc and
+then left while the two defects beside it were repaired), then a consumer whose nine agents all
+appeared in the record as one. `thought(agent, finishReason, thinking, content)` is the fixed form;
+the old three-argument one is deprecated, still works, and still loses the agent — so the compiler
+says so at the call site instead of a record saying so months later.
 
 **Background work is bounded by processes, from 0.24.0.** `run_in_background` returns immediately,
 and returning immediately is how a bounded thing escapes its bound: the foreground timeout bounds

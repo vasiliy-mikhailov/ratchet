@@ -227,7 +227,7 @@ public final class Wire implements Chat {
             throw new Refused(response.statusCode(),
                     response.body().collect(Collectors.joining("\n")));
         }
-        return read(response.body());
+        return read(response.body(), ask.from());
     }
 
     /**
@@ -247,6 +247,17 @@ public final class Wire implements Chat {
      * this library exists to argue against.
      */
     Reply read(Stream<String> body) {
+        return read(body, "");
+    }
+
+    /**
+     * The same, told who asked, so the reasoning row this writes can be narrowed to that agent.
+     *
+     * <p>{@code Ask} has carried {@code from} since 0.13.0 and this method simply never took it,
+     * which is the whole of why {@code thought} rows were unattributed: not a hard problem, a
+     * missing parameter, and one that only a record being READ could reveal.
+     */
+    Reply read(Stream<String> body, String agent) {
         BlockingQueue<Object> lines = new LinkedBlockingQueue<>();
         Thread reader = new Thread(() -> {
             try {
@@ -262,7 +273,7 @@ public final class Wire implements Chat {
         StringBuilder said = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
         Map<Integer, Building> calls = new LinkedHashMap<>();
-        Reasoning watching = new Reasoning(trace);
+        Reasoning watching = new Reasoning(trace, agent);
         String finish = "";
         Spend spend = Spend.NONE;
 
