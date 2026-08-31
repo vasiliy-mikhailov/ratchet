@@ -20,6 +20,21 @@ So the test for anything below is: **does it need to know something only the cal
 does, it is a seam and not a feature. If a consumer could have written it themselves given the right
 hook, give them the hook.
 
+**And a correction to it, from the consumer it was costing.** For four versions this principle was
+also the reason ratchet shipped no tool implementations at all — `Tool` is three strings, the loop
+must not decide what an agent can do, therefore write your own. One consumer carried an entire
+client library because four file tools came from it; replacing those four took them 505 lines and
+removed 1,053. Their sentence, and it is the whole correction:
+
+> *The thing that had been costing people was never the principle. It was that the principle had no
+> shipped default beside it.*
+
+A default is not a decision as long as taking it is a choice. `Retry.local()`, `Budget.shipped()`
+and the `ratchet-tools` module are all the same shape: numbers and implementations this library
+picked, in the open, replaceable, and never on the path of a caller who did not ask. What the
+principle forbids is the library deciding for a caller who cannot see the decision — not the library
+having an opinion a caller can read and reject.
+
 Every bound this library shipped before 0.16 broke that rule in the same direction: it cut at the
 moment of *writing*, where the information is still available and nobody yet knows what will be
 needed. `Keeping` and `Telling` moved the decision to the caller. This moves it to the point of
