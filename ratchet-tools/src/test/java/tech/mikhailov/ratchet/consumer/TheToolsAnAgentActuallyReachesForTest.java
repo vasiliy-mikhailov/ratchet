@@ -5,12 +5,15 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
 import java.util.Map;
 
 import tech.mikhailov.ratchet.llm.Called;
 import tech.mikhailov.ratchet.llm.Calling;
 import tech.mikhailov.ratchet.llm.Tool;
 import tech.mikhailov.ratchet.tools.Kit;
+import tech.mikhailov.ratchet.tools.Search;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,12 +29,126 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TheToolsAnAgentActuallyReachesForTest {
 
     @Test
-    void theMeasuredSetIsWhatIsOffered(@TempDir Path dir) {
+    void theSetIsTheUnionOfTwoCorporaRatherThanTheFirstOneMeasured(@TempDir Path dir) {
         assertEquals(
-                java.util.List.of("read", "write", "edit", "list_dir", "bash",
+                java.util.List.of("read", "write", "edit", "list_dir", "grep", "glob", "bash",
                         "job_output", "job_list", "job_kill", "todo_write"),
                 Kit.at(dir).tools().keySet().stream().map(Tool::name).toList(),
-                "the set TOOLS.md measured, in the order a reader meets them");
+                "grep and glob are here because a second corpus put them at 15.9% and 8.7% of "
+                        + "11,328 calls, in 24 of 24 lanes, against TOOLS.md's three calls in six "
+                        + "runs. Both measurements are real; the union is what ships.");
+    }
+
+    /**
+     * THE CALLER WHO REFUSES A SHELL IS THE ONE WHO MOST NEEDS SEARCH, which is what made leaving
+     * grep out on the grounds that "bash can do it" the wrong call rather than merely a close one.
+     */
+    @Test
+    void aKitWithoutAShellStillFindsThingsAndOffersNoWayToStartAProcess(@TempDir Path dir) {
+        java.util.List<String> offered = Kit.withoutShell(dir).tools().keySet().stream()
+                .map(Tool::name).toList();
+
+        assertEquals(java.util.List.of("read", "write", "edit", "list_dir", "grep", "glob",
+                "todo_write"), offered);
+        assertFalse(offered.contains("bash"), "nothing here starts a process");
+        assertFalse(offered.stream().anyMatch(name -> name.startsWith("job_")),
+                "and the job tools go with it, since there is nothing to have started");
+    }
+
+    @Test
+    void grepSaysWhichFileAndWhichLineAndHowManyItFoundAltogether(@TempDir Path dir)
+            throws Exception {
+        Files.createDirectories(dir.resolve("src/main"));
+        Files.writeString(dir.resolve("src/main/A.java"), "class A {\n  Missing thing;\n}\n");
+        Files.writeString(dir.resolve("src/main/B.java"), "class B {\n  Missing other;\n}\n");
+        Files.writeString(dir.resolve("notes.txt"), "nothing to see\n");
+        Map<Tool, Calling> tools = Kit.withoutShell(dir).tools();
+
+        String found = call(tools, "grep", "{\"pattern\":\"Missing\"}");
+
+        assertTrue(found.contains("src/main/A.java"), found);
+        assertTrue(found.contains("src/main/B.java"), found);
+        assertTrue(found.contains("Line 2: "), "the line number is the coordinate: " + found);
+        assertTrue(found.contains("2 matches"), "and the count is there: " + tail(found));
+
+        String narrowed = call(tools, "grep",
+                "{\"pattern\":\"Missing\",\"include\":\"A.java\"}");
+        assertTrue(narrowed.contains("A.java"));
+        assertFalse(narrowed.contains("B.java"), "include narrows what is searched: " + narrowed);
+
+        String none = call(tools, "grep", "{\"pattern\":\"NotAnywhere\"}");
+        assertTrue(none.toLowerCase().contains("no matches"), none);
+    }
+
+    /**
+     * A PAGE OF 250 OUT OF 1,842 IS SAFE TO REASON FROM; A PAGE OF 250 CALLED "250 MATCHES" IS NOT
+     * — a model told the smaller number believes it has seen the set and reasons about the absence
+     * of everything else.
+     */
+    @Test
+    void theCountIsOfEveryMatchAndNotOfWhatFitOnThePage(@TempDir Path dir) throws Exception {
+        StringBuilder many = new StringBuilder();
+        for (int i = 1; i <= 300; i++) {
+            many.append("hit ").append(i).append('\n');
+        }
+        Files.writeString(dir.resolve("many.txt"), many.toString());
+
+        String found = call(Kit.withoutShell(dir).tools(), "grep", "{\"pattern\":\"hit\"}");
+
+        assertTrue(found.contains("250 of 300 matches shown"), tail(found));
+        assertFalse(found.contains("hit 300"), "the page really did stop");
+    }
+
+    @Test
+    void globMatchesAPathAtAnyDepthAndAnswersNewestFirst(@TempDir Path dir) throws Exception {
+        Files.createDirectories(dir.resolve("src/test"));
+        Path old = dir.resolve("src/test/OldTest.java");
+        Path recent = dir.resolve("src/test/NewTest.java");
+        Files.writeString(old, "old");
+        Files.writeString(recent, "new");
+        Files.writeString(dir.resolve("src/test/notes.md"), "not java");
+        Files.setLastModifiedTime(old, FileTime.fromMillis(1_000_000_000_000L));
+        Files.setLastModifiedTime(recent, FileTime.fromMillis(1_700_000_000_000L));
+        Map<Tool, Calling> tools = Kit.withoutShell(dir).tools();
+
+        String anyDepth = call(tools, "glob", "{\"pattern\":\"*Test.java\"}");
+        assertTrue(anyDepth.contains("src/test/NewTest.java"),
+                "a pattern with no slash matches a name at any depth, as gitignore does: "
+                        + anyDepth);
+        assertFalse(anyDepth.contains("notes.md"));
+        assertTrue(anyDepth.indexOf("NewTest") < anyDepth.indexOf("OldTest"),
+                "newest first, because the cap takes the head: " + anyDepth);
+
+        assertTrue(call(tools, "glob", "{\"pattern\":\"**/*.md\"}").contains("notes.md"),
+                "and ** crosses directories");
+    }
+
+    /**
+     * A REGEX A MODEL WROTE CAN STILL RUN FOREVER, and java.util.regex cannot be interrupted.
+     *
+     * <p>THE PATTERN HERE IS CHOSEN FROM A MEASUREMENT, not from the textbook. The textbook
+     * examples no longer bite: on the JDK this builds against, {@code (x+x+)+y} over sixty
+     * characters answers in a millisecond, and so do {@code ^(a+)+$}, {@code ([a-zA-Z]+)*$} and
+     * {@code ^(a|a)*$} — the engine memoises them away. A BACKREFERENCE cannot be memoised, and
+     * {@code (a+)+\1b} over thirty characters was measured at 50.6 SECONDS; this file is longer
+     * than that, so an unguarded run of this test would not end during anyone's working day.
+     *
+     * <p>And a backreference is exactly what ripgrep REFUSES and Java ACCEPTS, so the one place the
+     * wider dialect is a hazard is the one place the engine cannot protect itself.
+     */
+    @Test
+    void aBacktrackingPatternEndsTheCallRatherThanTheRun(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("wide.txt"), "a".repeat(32) + "\n");
+        Map<Tool, Calling> tools = new Search(dir, Duration.ofMillis(300)).tools();
+
+        long started = System.nanoTime();
+        String answered = call(tools, "grep", "{\"pattern\":\"(a+)+\\\\1b\"}");
+        long tookMillis = (System.nanoTime() - started) / 1_000_000;
+
+        assertTrue(tookMillis < 20_000, "it came back at all, in " + tookMillis + "ms");
+        assertTrue(answered.contains("backtracks"),
+                "and it says what was wrong with the pattern: " + answered);
+        assertTrue(answered.contains("wide.txt"), "and where: " + answered);
     }
 
     @Test

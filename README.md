@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.22.0</version>
+  <version>0.23.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.22.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.23.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -241,14 +241,26 @@ consumer to write the same five hundred lines: one carried an entire client libr
 file tools came from it, and replacing them took 505 lines while removing 1,053. So there is a third
 module, `ratchet-tools`, and taking it is a choice.
 
-It offers what [TOOLS.md](TOOLS.md) measured — `read`, `write`, `edit`, `list_dir`, `bash`,
-`job_output`, `job_list`, `job_kill`, `todo_write` — with dsh's own snake_case schemas, so a model
-that has met theirs meets these. `grep` is absent for the reason the measurement gives: three calls
-in six runs, and `bash` can do it.
+It offers `read`, `write`, `edit`, `list_dir`, `grep`, `glob`, `bash`, `job_output`, `job_list`,
+`job_kill`, `todo_write`, with dsh's own snake_case schemas, so a model that has met theirs meets
+these.
+
+**`grep` and `glob` arrived in 0.23.0 because [TOOLS.md](TOOLS.md) was wrong about them.** That
+measurement — three calls in six runs, and `bash` can do it — is real, but a second consumer's
+corpus puts `grep` SECOND at 1,797 calls and 15.9%, in 24 of 24 lanes, with `glob` at 8.7% in all
+24. Three orders of magnitude apart means two kinds of agent, not two samples: an agent asked what
+shape a missing type must be can only answer by finding every use site of a name. The union ships.
 
 **It is not a sandbox.** A root directory bounds the file tools and bounds nothing about `bash`,
 which runs as whoever runs the JVM. dsh ships four sandbox packages and a policy layer around its
 shell; this ships a working directory and says so.
+
+**`Kit.withoutShell(root)`** is the set with no `bash` and no job tools — nothing in it starts a
+process. It exists because a consumer enforces every guarantee they have at the tool boundary
+(an edit outside one directory reverted before the next turn, the credential store refused by path,
+the test configuration unweakenable), runs unattended against repositories they do not own, and was
+right that filtering a shell out of a kit that HAS one is a refactor away from handing it over. It
+is still not a sandbox; it is narrower than that and says exactly what it is.
 
 **A compaction policy.** `Between` hands a caller the conversation before each request and takes
 back what to send; deciding when and what to drop needs the route's real context window and whether

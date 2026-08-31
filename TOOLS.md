@@ -64,13 +64,57 @@ inferring an API from compiler errors, which is how the weaker runs spent their 
 
 Also assumed: a writable `~/.m2`, `python3`, `unzip`, and disk for a full dependency tree.
 
-## What I would advertise
+## What I would advertise, on this corpus alone
 
     bash  write  edit  read  job_output  job_kill  todo_write
 
 `todo_write` appears in 6/6 runs at 1.3% — cheap, and every run reached for it. `create_goal` is the
 same shape. Skip `grep` and `web_search`: the first is `bash`, and the second went unused because
 this task is answerable from the repositories and Maven Central.
+
+**That `grep` line was wrong, and the next section is why.** It is left standing because it is what
+this corpus says, and a measurement that gets edited after the fact stops being one.
+
+## A second corpus, three orders of magnitude apart
+
+Reported by a different consumer on 2026-08-31: **11,328 tool calls across 24 lanes** of a pipeline
+that writes surrogate implementations for missing types.
+
+| tool | calls | share | present in |
+| --- | ---: | ---: | --- |
+| `read_file` | 5,089 | 44.9% | 24/24 |
+| `grep` | 1,797 | 15.9% | 24/24 |
+| `write_file` | 1,151 | 10.2% | 8/24 |
+| `list_dir` | 1,099 | 9.7% | 24/24 |
+| `glob` | 988 | 8.7% | 24/24 |
+| `edit_file` | 536 | 4.7% | 21/24 |
+| `compile_run_tests_and_get_errors` | 281 | 2.5% | 24/24 |
+| `signature` | 167 | 1.5% | 9/24 |
+| `deps` | 149 | 1.3% | 24/24 |
+
+`grep` is SECOND here and present in every lane. Against three calls in six runs above, that is
+about three orders of magnitude — which is too far apart to be two samples of the same thing. It is
+two different kinds of agent.
+
+**The task is the difference.** A fake-writer's central question is *what shape must this missing
+type be*, and the only answer is every use site of a name across a tree. `grep` IS that question;
+`read` is what you do once it has answered. Together they are 61% of everything that pipeline does.
+An agent navigating a repository it already understands does not look like this — it reads and it
+runs, which is the corpus at the top of this file.
+
+**So the omission was doubly wrong.** Not only is `grep` load-bearing for a whole class of work, the
+reason given for leaving it out — *`bash` can do it* — holds only for a caller who takes `bash`. The
+caller who refuses a shell, because every guard they have is enforced at the tool boundary, was
+being told to search with the one tool they had already ruled out. Two defensible decisions
+combining into an indefensible one.
+
+`grep` and `glob` ship in 0.23.0, beside the file tools rather than beside `bash`.
+
+**What did not ship, and why.** `signature` — read a library type's real members instead of
+inventing them — is a good tool and its owner should keep it; it needs a JDK and a resolved
+classpath, which is a build system's knowledge and not a library's. `compile_run_tests_and_get_errors`
+and `deps` are the same shape. A tool that needs to know how the project builds belongs to whoever
+knows that.
 
 ## What this does not establish
 

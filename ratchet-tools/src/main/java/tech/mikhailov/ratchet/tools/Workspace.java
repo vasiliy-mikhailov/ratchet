@@ -6,7 +6,6 @@ import java.nio.charset.MalformedInputException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -85,8 +84,8 @@ public final class Workspace {
             "path":{"type":"string","description":"The directory to list."}},
             "required":["path"]}""";
 
-    /** Absolute and normalised once, at construction, because every check below compares to it. */
-    private final Path root;
+    /** The root check, which {@link Search} shares, because a guard written twice drifts. */
+    private final Rooted rooted;
 
     /**
      * @param root the directory every path is resolved against. It is not required to exist yet:
@@ -94,17 +93,16 @@ public final class Workspace {
      *             write is a run this library already has.
      */
     public Workspace(Path root) {
-        if (root == null) {
-            throw new IllegalArgumentException("a workspace has to be rooted somewhere, and a null "
-                    + "root would resolve every path a model wrote against the JVM's own working "
-                    + "directory");
-        }
-        this.root = root.toAbsolutePath().normalize();
+        this.rooted = new Rooted(root);
+    }
+
+    Workspace(Rooted rooted) {
+        this.rooted = rooted;
     }
 
     /** Where this is rooted, for a caller that wants to say so in a prompt. */
     public Path root() {
-        return root;
+        return rooted.path();
     }
 
     /** All four, in the order a model meets them in a system prompt: look, make, change, look. */
@@ -154,7 +152,7 @@ public final class Workspace {
      */
     private String read(Called call) throws IOException {
         String given = Args.need(call.arguments(), "file_path");
-        Where where = at(given);
+        Rooted.Where where = at(given);
         if (where.refused()) {
             return where.refusal();
         }
@@ -164,7 +162,7 @@ public final class Workspace {
         }
         if (!Files.exists(file)) {
             return "There is no file at " + shown(file) + ". list_dir on "
-                    + shown(file.getParent() == null ? root : file.getParent())
+                    + shown(file.getParent() == null ? rooted.path() : file.getParent())
                     + " will say what is actually there.";
         }
         int total;
@@ -231,7 +229,7 @@ public final class Workspace {
      */
     private String write(Called call) throws IOException {
         String given = Args.need(call.arguments(), "file_path");
-        Where where = at(given);
+        Rooted.Where where = at(given);
         if (where.refused()) {
             return where.refusal();
         }
@@ -278,7 +276,7 @@ public final class Workspace {
     private String edit(Called call) throws IOException {
         String args = call.arguments();
         String given = Args.need(args, "file_path");
-        Where where = at(given);
+        Rooted.Where where = at(given);
         if (where.refused()) {
             return where.refusal();
         }
@@ -342,7 +340,7 @@ public final class Workspace {
      */
     private String list(Called call) throws IOException {
         String given = Args.maybe(call.arguments(), "path", ".");
-        Where where = at(given);
+        Rooted.Where where = at(given);
         if (where.refused()) {
             return where.refusal();
         }
@@ -377,52 +375,18 @@ public final class Workspace {
                 + " characters") + ")";
     }
 
-    /** A resolved path, or the sentence explaining why the model is not getting one. */
-    private record Where(Path path, String refusal) {
-
-        boolean refused() {
-            return refusal != null;
-        }
-    }
-
     /**
-     * THE ROOT IS THE ONLY CONFINEMENT HERE, AND IT IS LEXICAL. Saying that precisely matters more
-     * than the check itself does.
-     *
-     * <p>Every path a model writes is resolved against the root and then normalised, so a
-     * {@code ../..} is collapsed BEFORE the comparison rather than after it, and an absolute path
-     * is taken as given and compared the same way. What does not start with the root is refused as
-     * a result naming both paths, because a model told "denied" tries a variation of the same path
-     * and a model told where the root is tries a path inside it.
-     *
-     * <p>WHAT IT DOES NOT DO, stated because a half-described guard is worse than an absent one.
-     * It never touches the filesystem: a symlink INSIDE the root that points outside it is followed
-     * by every one of these tools and this check will not see it. It bounds paths and not
-     * processes, so the {@code bash} tool in the same kit is unaffected and runs as whoever runs
-     * the JVM. And it is enforced by this class alone, which means it holds for calls that come
-     * through here and for nothing else. Real confinement is a container, a user, or a mount
-     * namespace; this is not a smaller version of one.
+     * THE ROOT CHECK, WHICH LIVES IN {@link Rooted} because {@link Search} enforces the same one.
+     * Everything it does and everything it does not do is documented there, and the "does not" half
+     * is the important half.
      */
-    private Where at(String given) {
-        Path resolved;
-        try {
-            resolved = root.resolve(given).normalize();
-        } catch (InvalidPathException notAPath) {
-            return new Where(null, "\"" + Retain.glance(given) + "\" is not a usable path on this "
-                    + "system: " + notAPath.getReason() + ".");
-        }
-        if (!resolved.startsWith(root)) {
-            return new Where(null, given + " resolves to " + resolved + ", which is outside this "
-                    + "workspace. Everything readable and writable is under " + root + ", and a "
-                    + "path may be relative to that root or absolute inside it.");
-        }
-        return new Where(resolved, null);
+    private Rooted.Where at(String given) {
+        return rooted.at(given);
     }
 
     /** A path as a result should name it: relative to the root, and "." for the root itself. */
     private String shown(Path path) {
-        String relative = root.relativize(path).toString();
-        return relative.isEmpty() ? "." : relative;
+        return rooted.shown(path);
     }
 
     /**

@@ -25,12 +25,26 @@ final class Retain {
      */
     static final int MOST = 16_000;
 
+    /** dsh's cap on one matched line, which is a different job from bounding a whole result. */
+    static final int MOST_LINE = Search.MOST_LINE;
+
     private Retain() {
     }
 
     /** {@code text}, bounded, saying how much it left out. */
     static String most(String text) {
         return Retained.head(text == null ? "" : text, MOST, "\n").text();
+    }
+
+    /**
+     * ONE MATCHED LINE, at dsh's {@code GREP_MAX_LINE_BYTES}.
+     *
+     * <p>A grep result is many lines of other people's files, and one of them is a minified bundle
+     * or a base64 blob. Bounding the WHOLE result is not enough: without this, that single line is
+     * the entire page and the two hundred real matches behind it are the part that gets cut.
+     */
+    static String line(String text) {
+        return Retained.head(text == null ? "" : text, MOST_LINE, " ").text();
     }
 
     /** A short quotation of something that went wrong, for a message the model has to act on. */
