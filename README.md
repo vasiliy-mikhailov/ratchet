@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.21.0</version>
+  <version>0.22.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.21.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.22.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -235,12 +235,20 @@ holding one consumer's idea of what a version is made of.
 The reader half. ratchet writes `settlements.jsonl` and `trace.jsonl` and does not ship anything
 that parses them back into a page. That asymmetry is real and worth naming rather than hiding.
 
-**Tools.** `Tool` is three strings and this library ships none, deliberately: the loop must not
-decide what a caller's agent can do. But every caller then guesses the same list, and guessing is
-worse than measuring — so [TOOLS.md](TOOLS.md) records what one agent actually reached for across
-816 calls and six runs of a real task. Read its last section first: those runs were not controlled
-against each other, so it is evidence of *which tools get reached for*, not a ranking to tune
-against.
+**Tools — until 0.22.0.** `Tool` is still three strings and `Asking` still has no opinion about
+what it is handed; that principle is about the LOOP. What it did not justify was leaving every
+consumer to write the same five hundred lines: one carried an entire client library because four
+file tools came from it, and replacing them took 505 lines while removing 1,053. So there is a third
+module, `ratchet-tools`, and taking it is a choice.
+
+It offers what [TOOLS.md](TOOLS.md) measured — `read`, `write`, `edit`, `list_dir`, `bash`,
+`job_output`, `job_list`, `job_kill`, `todo_write` — with dsh's own snake_case schemas, so a model
+that has met theirs meets these. `grep` is absent for the reason the measurement gives: three calls
+in six runs, and `bash` can do it.
+
+**It is not a sandbox.** A root directory bounds the file tools and bounds nothing about `bash`,
+which runs as whoever runs the JVM. dsh ships four sandbox packages and a policy layer around its
+shell; this ships a working directory and says so.
 
 **A compaction policy.** `Between` hands a caller the conversation before each request and takes
 back what to send; deciding when and what to drop needs the route's real context window and whether

@@ -5,7 +5,7 @@
 
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-parent</artifactId>
-  <version>0.21.0</version>
+  <version>0.22.0</version>
   <packaging>pom</packaging>
 
   <name>ratchet</name>
@@ -58,6 +58,7 @@
   <modules>
     <module>ratchet-core</module>
     <module>ratchet-llm</module>
+    <module>ratchet-tools</module>
   </modules>
 
   <properties>
@@ -89,6 +90,11 @@
       <dependency>
         <groupId>tech.mikhailov.ratchet</groupId>
         <artifactId>ratchet-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>tech.mikhailov.ratchet</groupId>
+        <artifactId>ratchet-llm</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

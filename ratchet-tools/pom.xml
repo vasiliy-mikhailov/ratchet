@@ -1,0 +1,34 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>tech.mikhailov.ratchet</groupId>
+    <artifactId>ratchet-parent</artifactId>
+    <version>0.22.0</version>
+  </parent>
+  <artifactId>ratchet-tools</artifactId>
+  <packaging>jar</packaging>
+  <name>ratchet-tools</name>
+  <description>The tools an agent actually reaches for: bash, read, write, edit, background jobs and
+    a todo list. Opt-in, and the JDK only.</description>
+  <!-- A THIRD MODULE, AND WHY IT IS SEPARATE RATHER THAN PART OF ratchet-llm.
+
+       `Tool` is three strings and this project shipped no implementations, deliberately: the loop
+       must not decide what a caller's agent can do. That principle is about the LOOP, and it stayed
+       true while costing every consumer the same five hundred lines. One carried an entire client
+       library — and therefore its loop, and therefore its transport — because four file tools came
+       from it and were shaped by it. Writing them onto `Tool`/`Calling` took 505 lines and removed
+       1,053.
+
+       So the tools are here and not there. A consumer who wants them takes this dependency; one who
+       does not is unaffected, and `Asking` still has no opinion about what it is handed. That is the
+       same shape as `Retry.local()`: a shipped default nobody is obliged to use.
+
+       THE SET IS MEASURED RATHER THAN GUESSED. See TOOLS.md at the root: 816 calls across six runs
+       of one real task, where five tools carry 97%. -->
+  <dependencies>
+    <dependency>
+      <groupId>tech.mikhailov.ratchet</groupId>
+      <artifactId>ratchet-llm</artifactId>
+    </dependency>
+  </dependencies>
+</project>
