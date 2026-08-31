@@ -49,11 +49,11 @@ public final class Kit {
     private final Jobs jobs;
     private final Todos todos;
 
-    private Kit(Path root, Duration timeout, boolean shell) {
+    private Kit(Path root, Duration timeout, int background, boolean shell) {
         Rooted rooted = new Rooted(root);
         this.workspace = new Workspace(rooted);
         this.search = new Search(rooted, Search.LONGEST);
-        this.jobs = shell ? new Jobs() : null;
+        this.jobs = shell ? new Jobs(background) : null;
         this.shell = shell ? new Shell(root, timeout, jobs) : null;
         this.todos = new Todos();
     }
@@ -72,7 +72,19 @@ public final class Kit {
      * {@code run_in_background} and {@link Jobs} are for.
      */
     public static Kit at(Path root, Duration foregroundTimeout) {
-        return new Kit(root, foregroundTimeout, true);
+        return at(root, foregroundTimeout, Jobs.RUNNING);
+    }
+
+    /**
+     * The same, with the ceiling on background processes chosen — and it is the one number here a
+     * caller is most likely to need to change, because it is the only one about their MACHINE.
+     *
+     * <p>{@code run_in_background} returns immediately, so nothing about a tool call's own timeout
+     * bounds how many builds a model may have running at once. {@link Jobs#RUNNING} says why the
+     * shipped sixteen is a runaway guard rather than a shape; anyone sharing a box should say less.
+     */
+    public static Kit at(Path root, Duration foregroundTimeout, int backgroundJobs) {
+        return new Kit(root, foregroundTimeout, backgroundJobs, true);
     }
 
     /**
@@ -98,7 +110,7 @@ public final class Kit {
      * having: nothing in this set starts a process.
      */
     public static Kit withoutShell(Path root) {
-        return new Kit(root, Duration.ZERO, false);
+        return new Kit(root, Duration.ZERO, Jobs.RUNNING, false);
     }
 
     /** All of them, in the order a reader of this class would expect to meet them. */

@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.23.0</version>
+  <version>0.24.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.23.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.24.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -254,6 +254,14 @@ shape a missing type must be can only answer by finding every use site of a name
 **It is not a sandbox.** A root directory bounds the file tools and bounds nothing about `bash`,
 which runs as whoever runs the JVM. dsh ships four sandbox packages and a policy layer around its
 shell; this ships a working directory and says so.
+
+**Background work is bounded by processes, from 0.24.0.** `run_in_background` returns immediately,
+and returning immediately is how a bounded thing escapes its bound: the foreground timeout bounds
+one call, the registry's cap of 32 bounds how many jobs stay *readable* and never evicts a live one,
+and nothing bounded the machine. `Jobs.RUNNING` is 16 as a runaway guard, settable per caller via
+`new Jobs(n)` or `Kit.at(root, timeout, n)` — anyone sharing a box should say less. Found by
+analogy, not by failure: dsh's `maxParallelToolCalls` cannot bound subagent concurrency for the same
+mechanical reason, and one parent was measured holding 13 children under a cap of 1.
 
 **`Kit.withoutShell(root)`** is the set with no `bash` and no job tools — nothing in it starts a
 process. It exists because a consumer enforces every guarantee they have at the tool boundary

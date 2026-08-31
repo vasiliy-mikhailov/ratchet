@@ -88,6 +88,33 @@ public final class Jobs {
     /** How many jobs stay readable. Beyond this the oldest ENDED job is forgotten, never a live one. */
     private static final int REMEMBERED = 32;
 
+    /**
+     * HOW MANY PROCESSES MAY BE ALIVE AT ONCE, WHICH IS THE BOUND {@link #REMEMBERED} IS NOT.
+     *
+     * <p>{@code REMEMBERED} looks like this knob and is not one. It caps how many jobs stay
+     * READABLE and refuses to evict a live job, and its own comment says the quiet part out loud —
+     * "the cap is on memory, and memory is not what a running build costs". So nothing bounded the
+     * processes. A foreground {@code bash} call is bounded by its timeout; {@code
+     * run_in_background} returns immediately, and returning immediately is precisely how a bounded
+     * thing gets out from under its bound.
+     *
+     * <p>FOUND BY ANALOGY RATHER THAN BY FAILURE, and the analogy came from a different harness
+     * altogether. dsh's {@code maxParallelToolCalls} cannot bound subagent concurrency for the same
+     * mechanical reason — a background spawn frees the tool slot before the cap is consulted — and
+     * one parent was measured holding thirteen concurrent children under a cap of ONE, with
+     * {@code maxConcurrentJobsPerOwner} looking like the knob and not being it. The shape transfers
+     * exactly. Only what overruns differs, and ours is the worse of the two: their runaway costs
+     * money and announces itself as HTTP 429 from a server that pushes back, and ours is operating
+     * system processes on somebody's machine, where nothing pushes back until the machine does.
+     *
+     * <p>SIXTEEN IS A RUNAWAY GUARD AND NOT A SHAPE, which is the correction {@code Budget} already
+     * had to make once for round counts. Real work has two or three builds in flight; a bound that
+     * fires on normal work is a bound ON the work. And it is a number picked with no knowledge of
+     * the machine, so a caller who knows theirs should say so — {@link #Jobs(int)} — and a caller
+     * sharing a box with anybody else should say something smaller.
+     */
+    public static final int RUNNING = 16;
+
     /** What {@code wait} costs when the model asks to wait and does not say for how long. */
     private static final long WAITED = 30_000;
 
@@ -131,10 +158,18 @@ public final class Jobs {
 
     private int started;
 
+    /** The ceiling on processes alive at once. See {@link #RUNNING} for why it is not REMEMBERED. */
+    private final int running;
+
     private boolean sweeping;
 
     public Jobs() {
-        this(Now.SYSTEM);
+        this(Now.SYSTEM, RUNNING);
+    }
+
+    /** As many processes alive at once as this caller's machine can actually carry. */
+    public Jobs(int running) {
+        this(Now.SYSTEM, running);
     }
 
     /**
@@ -149,7 +184,13 @@ public final class Jobs {
      * whether its deadline has passed, exactly as {@code Wire} does with its stall.
      */
     public Jobs(Now now) {
+        this(now, RUNNING);
+    }
+
+    /** Both seams at once, which is what a test of a bound that depends on time needs. */
+    public Jobs(Now now, int running) {
         this.now = now == null ? Now.SYSTEM : now;
+        this.running = running < 1 ? RUNNING : running;
     }
 
     /**
@@ -193,6 +234,22 @@ public final class Jobs {
         String kind = kind(pb.command());
         String id;
         synchronized (registry) {
+            // THE COUNT IS OF PROCESSES ALIVE, NOT OF IDS ISSUED. A run that started forty builds
+            // and let thirty-nine finish is not near anything, and refusing it would make this the
+            // second bound here whose unit is not what it claims to bound.
+            List<String> alive = new ArrayList<>();
+            for (Job each : registry.values()) {
+                if (!each.ended()) {
+                    alive.add(each.id);
+                }
+            }
+            if (alive.size() >= running) {
+                throw new IllegalStateException(alive.size() + " background jobs are already "
+                        + "running (" + String.join(", ", alive.subList(0, Math.min(6, alive.size())))
+                        + (alive.size() > 6 ? ", and " + (alive.size() - 6) + " more" : "")
+                        + ") and this run allows " + running + " at once. Read one with job_output "
+                        + "or stop one with job_kill before starting another");
+            }
             id = "j" + (++started);
         }
 

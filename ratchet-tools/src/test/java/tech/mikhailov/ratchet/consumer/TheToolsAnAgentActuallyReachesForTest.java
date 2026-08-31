@@ -12,10 +12,13 @@ import java.util.Map;
 import tech.mikhailov.ratchet.llm.Called;
 import tech.mikhailov.ratchet.llm.Calling;
 import tech.mikhailov.ratchet.llm.Tool;
+import tech.mikhailov.ratchet.tools.Jobs;
 import tech.mikhailov.ratchet.tools.Kit;
 import tech.mikhailov.ratchet.tools.Search;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -259,6 +262,41 @@ class TheToolsAnAgentActuallyReachesForTest {
         assertFalse(kit.todos().current().contains("read the pom"),
                 "the model sends the whole list every time; there are no partial updates");
         assertTrue(kit.todos().current().contains("only this"));
+    }
+
+    /**
+     * THE BOUND IS ON PROCESSES ALIVE, WHICH IS WHAT run_in_background GETS OUT FROM UNDER.
+     *
+     * <p>A foreground call is bounded by its timeout. A background one returns immediately, and
+     * returning immediately is exactly how a bounded thing escapes its bound — the registry's own
+     * cap of 32 is on how many jobs stay READABLE and explicitly never evicts a live one, so before
+     * this it capped memory and nothing capped the machine.
+     */
+    @Test
+    void backgroundWorkIsBoundedByProcessesAliveAndNotByIdsIssued() {
+        Jobs jobs = new Jobs(2);
+        Map<Tool, Calling> tools = jobs.tools();
+
+        String first = jobs.start("first", sleeping());
+        jobs.start("second", sleeping());
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> jobs.start("third", sleeping()));
+        assertTrue(refused.getMessage().contains("job_kill"),
+                "and it names the tool that makes room: " + refused.getMessage());
+        assertTrue(refused.getMessage().contains("2"), refused.getMessage());
+
+        call(tools, "job_kill", "{\"job_id\":\"" + first + "\"}");
+
+        assertDoesNotThrow(() -> jobs.start("fourth", sleeping()),
+                "an ended job frees its slot, because the count is of what is alive rather than "
+                        + "of what was ever started");
+        call(tools, "job_kill", "{\"job_id\":\"j2\"}");
+        call(tools, "job_kill", "{\"job_id\":\"j4\"}");
+    }
+
+    private static ProcessBuilder sleeping() {
+        return new ProcessBuilder("sleep", "30");
     }
 
     private static String call(Map<Tool, Calling> tools, String name, String arguments) {
