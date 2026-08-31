@@ -61,6 +61,14 @@ public interface Spilling {
      *             how to read it — the caller's words, because only the caller knows the tools
      */
     static Spilling to(java.util.function.Function<String, String> save) {
-        return (whole, room) -> Retained.within(whole, room).recoverableBy(save.apply(whole)).text();
+        return (whole, room) -> {
+            Retained kept = Retained.within(whole, room);
+            // SAVE ONLY WHEN SOMETHING WAS ACTUALLY LEFT OUT. What stood here passed
+            // save.apply(whole) as an ARGUMENT to recoverableBy, so it ran on every result however
+            // small — and recoverableBy correctly drops the notice when nothing was omitted, so the
+            // store was written and the locator thrown away. A caller wiring this to a filesystem
+            // got one file per tool call, almost all of them for results that travelled whole.
+            return kept.cut() ? kept.recoverableBy(save.apply(whole)).text() : kept.text();
+        };
     }
 }

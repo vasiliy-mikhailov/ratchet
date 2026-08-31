@@ -1,17 +1,23 @@
 package tech.mikhailov.ratchet.llm;
 
 /**
- * THE AGENT SPENT ITS ROUND BUDGET WITHOUT ANSWERING, AND ASKING AGAIN COSTS THE WHOLE BUDGET AGAIN.
+ * THE AGENT SPENT ITS BUDGET WITHOUT ANSWERING, AND ASKING AGAIN COSTS THE WHOLE BUDGET AGAIN.
  *
  * <p>A type rather than a message, for the reason {@link GaveUp} and {@link Truncated} are types:
  * {@link Retrying#transportFailures()} has to decide whether a second attempt could answer
  * differently, and it must not decide by matching on English.
  *
- * <p>THIS ONE IS DETERMINISTIC AND THE COST OF GETTING IT WRONG IS MULTIPLICATIVE. The bound fires
- * after twenty-five rounds of tool calls, and the retry would re-run all twenty-five from nothing —
- * so ten attempts is two hundred and fifty rounds of model calls to reach the same wall. Every other
- * failure this package refuses costs one attempt to rediscover; this one costs a conversation, and
- * the busiest recorded conversation fitted 465 tool calls inside that budget.
+ * <p>THIS ONE IS DETERMINISTIC AND THE COST OF GETTING IT WRONG IS MULTIPLICATIVE. A retry re-runs
+ * the whole conversation from nothing to reach the same wall, so ten attempts is ten conversations
+ * to learn one fact. Every other failure this package refuses costs one attempt to rediscover; this
+ * one costs a conversation. Measured: the run that raised this had spent 2,052,727 tokens over 36
+ * turns, so a retried lane would have paid that again for the same answer.
+ *
+ * <p>WHAT IT NO LONGER MEANS. This said "round budget" and "fires after twenty-five rounds" for as
+ * long as {@code MAX_ROUNDS} existed, and {@link Budget} replaced that in 0.20.0 with a token
+ * ceiling and a rounds backstop far above real work. The prose outlived the bound it described, and
+ * a consumer reading it would have gone looking for a round cap that was not there. It is a token
+ * ceiling that fires in practice; rounds are the backstop for a server that reports no usage.
  *
  * <p>It matters because of the door ratchet#8 opened. In the shipped chain {@code Asking} sits ABOVE
  * {@code Retrying}, so this never reached the predicate — but {@link Retrying#around} exists so a

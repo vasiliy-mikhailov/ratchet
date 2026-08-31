@@ -11,6 +11,7 @@ import java.util.Map;
 
 import tech.mikhailov.ratchet.llm.Called;
 import tech.mikhailov.ratchet.llm.Calling;
+import tech.mikhailov.ratchet.llm.Spilling;
 import tech.mikhailov.ratchet.llm.Tool;
 import tech.mikhailov.ratchet.tools.Jobs;
 import tech.mikhailov.ratchet.tools.Kit;
@@ -293,6 +294,66 @@ class TheToolsAnAgentActuallyReachesForTest {
                         + "of what was ever started");
         call(tools, "job_kill", "{\"job_id\":\"j2\"}");
         call(tools, "job_kill", "{\"job_id\":\"j4\"}");
+    }
+
+    /**
+     * THE RECORD KEEPS THE WHOLE OUTPUT AND THE MODEL GETS A PAGE OF IT, WHICH IS THE OLDEST RULE
+     * IN THIS LIBRARY AND WAS NOT TRUE OF {@code bash} UNTIL 0.27.0.
+     *
+     * <p>{@code Retain.MOST} bounds what the model is shown, correctly. {@code Shell.KEEPING}
+     * bounds the heap, correctly. Everything between them — up to a million characters of a failing
+     * build — was read, held, shown as sixteen thousand, and then dropped when the call returned.
+     * For {@code read} that is harmless: the file is still on disk and the footer names the page.
+     * For {@code bash} the output IS the only copy, and ten thousand lines of compiler errors exist
+     * nowhere else once the process has gone.
+     *
+     * <p>Reported by the consumer whose own rule is "bound the prompt, never the record", who took
+     * the narrowing knowingly rather than let it drift unrecorded.
+     */
+    @Test
+    void bashHandsTheWholeOutputToTheStoreAndTheModelAPageWithTheWayBack(@TempDir Path dir) {
+        StringBuilder saved = new StringBuilder();
+        Map<Tool, Calling> tools = Kit.at(dir, Duration.ofMinutes(1), 4,
+                Spilling.to(whole -> {
+                    saved.append(whole);
+                    return "The whole of it is at out.txt; read it with offset and limit.";
+                })).tools();
+
+        String shown = call(tools, "bash",
+                "{\"command\":\"seq 1 5000\",\"description\":\"print a lot\"}");
+
+        assertTrue(saved.toString().contains("\n5000"),
+                "the store got the end of the output, which is the part a bound removes");
+        assertFalse(shown.contains("\n5000\n"), "and the model did not: " + tail(shown));
+        assertTrue(shown.contains("out.txt"),
+                "and it is told where the rest is, which is the difference between a magnitude and "
+                        + "a way back: " + tail(shown));
+        assertTrue(shown.contains("[exit code: 0]"), "the code still survives the bound");
+    }
+
+    /**
+     * AND A RESULT THAT FITS IS NOT SPILLED, which is not an optimisation.
+     *
+     * <p>{@code Spilling.to} passed {@code save.apply(whole)} as an ARGUMENT, so the store ran on
+     * every result however small — and {@code recoverableBy} correctly drops the notice when
+     * nothing was omitted, so the file was written and the locator thrown away. A caller wiring
+     * this to a filesystem got one file per tool call, nearly all of them for output that travelled
+     * whole.
+     */
+    @Test
+    void aResultThatFitsIsNeverHandedToTheStore(@TempDir Path dir) {
+        StringBuilder saved = new StringBuilder();
+        Map<Tool, Calling> tools = Kit.at(dir, Duration.ofMinutes(1), 4,
+                Spilling.to(whole -> {
+                    saved.append(whole);
+                    return "stored";
+                })).tools();
+
+        String shown = call(tools, "bash", "{\"command\":\"echo small\",\"description\":\"tiny\"}");
+
+        assertTrue(shown.contains("small"), shown);
+        assertEquals("", saved.toString(),
+                "nothing was omitted, so nothing needed storing");
     }
 
     private static ProcessBuilder sleeping() {

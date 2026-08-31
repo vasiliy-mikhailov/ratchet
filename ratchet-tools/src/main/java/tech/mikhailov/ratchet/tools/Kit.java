@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import tech.mikhailov.ratchet.llm.Calling;
+import tech.mikhailov.ratchet.llm.Spilling;
 import tech.mikhailov.ratchet.llm.Tool;
 
 /**
@@ -49,12 +50,12 @@ public final class Kit {
     private final Jobs jobs;
     private final Todos todos;
 
-    private Kit(Path root, Duration timeout, int background, boolean shell) {
+    private Kit(Path root, Duration timeout, int background, Spilling spilling, boolean shell) {
         Rooted rooted = new Rooted(root);
         this.workspace = new Workspace(rooted);
         this.search = new Search(rooted, Search.LONGEST);
         this.jobs = shell ? new Jobs(background) : null;
-        this.shell = shell ? new Shell(root, timeout, jobs) : null;
+        this.shell = shell ? new Shell(root, timeout, jobs, spilling) : null;
         this.todos = new Todos();
     }
 
@@ -84,7 +85,21 @@ public final class Kit {
      * shipped sixteen is a runaway guard rather than a shape; anyone sharing a box should say less.
      */
     public static Kit at(Path root, Duration foregroundTimeout, int backgroundJobs) {
-        return new Kit(root, foregroundTimeout, backgroundJobs, true);
+        return at(root, foregroundTimeout, backgroundJobs, Spilling.none());
+    }
+
+    /**
+     * The same, told where the rest of a result too big to send whole should go.
+     *
+     * <p>THIS IS THE ONE THAT KEEPS A RECORD HONEST. {@code bash} shows a model
+     * {@link Retain#MOST} characters and holds up to a million; without this, everything between
+     * the two is read, held, and dropped when the call returns — and a failing build's output is
+     * the only copy of itself. {@code read} does not need it, because the file is still on disk and
+     * the footer names the page. See {@link Shell#Shell(Path, Duration, Jobs, Spilling)}.
+     */
+    public static Kit at(Path root, Duration foregroundTimeout, int backgroundJobs,
+            Spilling spilling) {
+        return new Kit(root, foregroundTimeout, backgroundJobs, spilling, true);
     }
 
     /**
@@ -110,7 +125,7 @@ public final class Kit {
      * having: nothing in this set starts a process.
      */
     public static Kit withoutShell(Path root) {
-        return new Kit(root, Duration.ZERO, Jobs.RUNNING, false);
+        return new Kit(root, Duration.ZERO, Jobs.RUNNING, Spilling.none(), false);
     }
 
     /** All of them, in the order a reader of this class would expect to meet them. */

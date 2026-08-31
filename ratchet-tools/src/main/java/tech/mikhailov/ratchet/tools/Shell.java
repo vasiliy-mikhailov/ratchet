@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import tech.mikhailov.ratchet.llm.Called;
+import tech.mikhailov.ratchet.llm.Spilling;
 import tech.mikhailov.ratchet.llm.Calling;
 import tech.mikhailov.ratchet.llm.Tool;
 import tech.mikhailov.ratchet.record.Json;
@@ -113,6 +114,9 @@ public final class Shell {
     /** Where a {@code run_in_background} command goes, and who owns its lifetime afterwards. */
     private final Jobs jobs;
 
+    /** Where the rest of a result too big to send goes. {@link Spilling#none()} unless told. */
+    private final Spilling spilling;
+
     /**
      * EVERYTHING A CALLER DECIDES ABOUT THIS TOOL: THREE THINGS, AND NONE OF THEM IS CONFINEMENT.
      *
@@ -130,6 +134,32 @@ public final class Shell {
      *                 than a mistake by the model.
      */
     public Shell(Path root, Duration patience, Jobs jobs) {
+        this(root, patience, jobs, Spilling.none());
+    }
+
+    /**
+     * THE SAME, TOLD WHERE THE REST OF A BIG RESULT GOES — which is the difference between a record
+     * that holds the output and a record that holds a page of it.
+     *
+     * <p>{@link Retain#MOST} bounds what the MODEL is shown and that is right. {@link #KEEPING}
+     * bounds what is held in heap and that is right too. What was wrong is that everything between
+     * them — up to a million characters of a failing build — was read, held, shown as sixteen
+     * thousand, and then dropped on the floor when the call returned. For {@code read} that is
+     * harmless because the file is still on disk and the footer says which page you got. For
+     * {@code bash} the output IS the only copy, and a build's ten thousand lines of compiler errors
+     * do not exist anywhere else.
+     *
+     * <p>Reported by the consumer whose own rule is "bound the prompt, never the record", who took
+     * the narrowing knowingly and asked that it not drift unrecorded. This is the seam that undoes
+     * it: {@link Spilling#to} hands the whole text to the caller's store and puts their locator in
+     * front of the model, and {@link Spilling#none} — the default — is exactly today's behaviour.
+     *
+     * <p>NOT WIRED INTO {@code job_output}, deliberately and for a different reason: a background
+     * job's output is read incrementally across polls, so the model sees all of what the ring held
+     * rather than one bounded page of it, and what overruns the ring already says so.
+     */
+    public Shell(Path root, Duration patience, Jobs jobs, Spilling spilling) {
+        this.spilling = spilling == null ? Spilling.none() : spilling;
         if (root == null) {
             throw new IllegalArgumentException("a shell needs a directory to start commands in");
         }
@@ -145,6 +175,8 @@ public final class Shell {
         this.patience = patience;
         this.jobs = jobs;
     }
+
+
 
     /**
      * ONE TOOL, NAMED {@code bash}, WHICH IS THE NAME EVERY MODEL HAS ALREADY MET.
@@ -382,7 +414,7 @@ public final class Shell {
      *              timeout, an interrupt, output left in a pipe nobody could close. Nulls are
      *              skipped, so the ordinary result carries none of them.
      */
-    private static String text(Drain out, Drain err, int code, String... notes) {
+    private String text(Drain out, Drain err, int code, String... notes) {
         StringBuilder result = new StringBuilder();
         section(result, out, "stdout", null);
         section(result, err, "stderr", "[stderr]");
@@ -423,8 +455,8 @@ public final class Shell {
      * would mean writing {@code Retained}'s sentence by hand with a number it never saw, and this
      * library spent a version removing the six hand-written copies of that sentence.
      */
-    private static void section(StringBuilder into, Drain drain, String stream, String header) {
-        String kept = Retain.most(drain.kept()).stripTrailing();
+    private void section(StringBuilder into, Drain drain, String stream, String header) {
+        String kept = spilling.kept(drain.kept(), Retain.MOST).stripTrailing();
         if (kept.isEmpty()) {
             return;
         }

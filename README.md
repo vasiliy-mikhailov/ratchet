@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.26.0</version>
+  <version>0.27.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.26.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.27.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -268,6 +268,19 @@ unattributed rows exactly as before and the record said nothing. **Every consume
 compile error; none of them takes a corpus that quietly stopped answering.** The end-to-end test
 runs over a real loopback socket, because the half that was broken was the LINK between
 `answer(ask)` and the row, and a link is only visible from both ends.
+
+**`bash` stops dropping its own output, from 0.27.0.** `Retain.MOST` bounds what the model is
+shown and `Shell.KEEPING` bounds the heap — but everything between them, up to a million characters
+of a failing build, was read, held, shown as 16,000 and then dropped when the call returned. `read`
+never had this problem: the file is still on disk and the footer names the page. `bash` output is
+the only copy of itself. `Kit.at(root, timeout, jobs, Spilling.to(save))` hands the whole thing to
+the caller's store and puts their locator in front of the model; `Spilling.none()` is the default
+and is exactly the old behaviour. Reported by the consumer whose own rule is *bound the prompt,
+never the record*, who took the narrowing knowingly rather than let it drift unrecorded.
+
+**`Spilling.to` no longer spills what fits.** It passed `save.apply(whole)` as an *argument*, so the
+store ran on every result however small, and `recoverableBy` correctly dropped the notice when
+nothing was omitted — one file per tool call, nearly all of them for output that travelled whole.
 
 **Background work is bounded by processes, from 0.24.0.** `run_in_background` returns immediately,
 and returning immediately is how a bounded thing escapes its bound: the foreground timeout bounds

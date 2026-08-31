@@ -50,11 +50,27 @@ public record Budget(long tokens, int rounds) {
      *
      * <p>Chosen to be a runaway guard rather than a work bound, which is the mistake the 25 made.
      * The longest healthy agent turn measured in the field is 176 rounds and 476 calls, so a
-     * thousand turns is roughly six times the worst real work anyone has reported. The token half
-     * is sized the same way: that consumer's heaviest PHASE spends 3.6M across many {@code run()}s,
-     * and this bounds one {@code run()}, where they sit well under two million. These are numbers
-     * this library picked, so they are numbers a caller should be able to replace — hence
-     * {@link #of} and {@link #none()}.
+     * thousand turns is roughly six times the worst real work anyone has reported.
+     *
+     * <p>THE TOKEN HALF WAS AN INFERENCE AND THE FIRST MEASUREMENT FALSIFIED IT. What stood here
+     * said that consumer's heaviest PHASE spends 3.6M across many {@code run()}s and that one
+     * {@code run()} sits "well under two million". One {@code run()} then reached
+     * <b>2,052,727 tokens over 36 turns</b> and hit this. The arithmetic was fine and the premise
+     * was not: a phase is not many equal runs, and the one that goes wrong is the one that spends
+     * everything.
+     *
+     * <p>THE NUMBER IS NOT OBVIOUSLY TOO LOW, WHICH IS THE UNCOMFORTABLE PART. That run was a
+     * genuine runaway: the phase had already been decided on the fifth tool call — the oracle went
+     * from "still walled" to "does not compile" — and the agent carried on for thirty-one more
+     * turns without noticing. So this fired on work that was already finished and wrong, which is
+     * what a runaway guard is for, and raising it would have bought more of the same. That is the
+     * opposite of the mistake the 25 made, and the two must not be confused: the 25 fired on
+     * NORMAL work, on 30.7% of turns.
+     *
+     * <p>WHAT A CALLER SHOULD TAKE FROM BOTH. This number came from a library that cannot see the
+     * work, and it was wrong the first time it met any. Set it from your own corpus — {@link #of}
+     * — and know what firing costs you: {@link Exhausted} ends the {@code run()}, and whether that
+     * ends a turn, a phase or a lane is a decision this library cannot make and does not.
      */
     public static Budget shipped() {
         return new Budget(2_000_000L, 1_000);
