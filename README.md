@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.25.0</version>
+  <version>0.26.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.25.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.26.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -261,9 +261,13 @@ not supply one — so every reasoning row was unattributed and silently missed e
 read, which returns an empty list and reads exactly like an honest absence. Measured twice before it
 was fixed: 737 rows in one sweep attributed to nobody (written down in `Listening`'s own javadoc and
 then left while the two defects beside it were repaired), then a consumer whose nine agents all
-appeared in the record as one. `thought(agent, finishReason, thinking, content)` is the fixed form;
-the old three-argument one is deprecated, still works, and still loses the agent — so the compiler
-says so at the call site instead of a record saying so months later.
+appeared in the record as one. `thought(agent, finishReason, thinking, content)` is the only form, and 0.26.0 removed the
+three-argument one it shipped deprecated for exactly one version. A deprecated method that still
+compiles is a lossy path somebody is still on — an implementation overriding only it wrote
+unattributed rows exactly as before and the record said nothing. **Every consumer takes a one-line
+compile error; none of them takes a corpus that quietly stopped answering.** The end-to-end test
+runs over a real loopback socket, because the half that was broken was the LINK between
+`answer(ask)` and the row, and a link is only visible from both ends.
 
 **Background work is bounded by processes, from 0.24.0.** `run_in_background` returns immediately,
 and returning immediately is how a bounded thing escapes its bound: the foreground timeout bounds

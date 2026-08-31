@@ -156,7 +156,7 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
         public void progress(String k, String n) { }
         public void applied(String s, String w) { }
         public void tool(String a, String t, String g, String r) { }
-        public void thought(String f, String t, String c) { }
+        public void thought(String agent, String f, String t, String c) { }
         public void built(String p, Trace.Outcome r) { }
         public void settled(String k, String s, String w, boolean b, boolean a) { }
         public void failed(String k, Throwable c) { }

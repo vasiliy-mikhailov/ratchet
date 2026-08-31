@@ -257,6 +257,36 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
         }
     }
 
+    /**
+     * THE WHOLE JOURNEY OF ONE NAME, over a real socket, because the two ends were connected by
+     * nothing for eleven versions.
+     *
+     * <p>{@code Ask} has carried {@code from} since 0.13.0 and {@code Trace.Event} has always had an
+     * {@code agent} column, and between them {@code Wire.read} simply never took the parameter — so
+     * every reasoning row in every corpus was written unattributed, and every agent-narrowed read
+     * of one returned an empty list that reads exactly like an honest absence. 737 in one sweep,
+     * and a consumer whose nine agents appeared in the record as one.
+     *
+     * <p>NO SEAM TEST COULD HAVE CAUGHT IT, which is why this one is end-to-end. Handing frames to
+     * {@code read(body, agent)} directly asserts the half that was never broken. What was broken is
+     * the LINK — that {@code answer(ask)} hands {@code ask.from()} down to the thing that writes the
+     * row — and a link is only visible from both of its ends.
+     */
+    @Test
+    @Timeout(30)
+    void theAgentOnTheAskIsTheAgentOnTheReasoningRow() throws Exception {
+        try (Loopback thinking = Loopback.thinkingAloud()) {
+            Notes notes = new Notes();
+
+            client(thinking.at(""), Watch.shipped(), notes).answer(ask().from("agent:pins"));
+
+            assertEquals(1, notes.thoughts.size(), notes.thoughts.toString());
+            assertEquals(List.of("agent:pins"), notes.thoughtAgents,
+                    "the name on the question is the name on the row, and before 0.25.0 this was "
+                            + "an empty string on every reasoning row ratchet ever wrote");
+        }
+    }
+
     // ---------------------------------------------------------------- the fakes
 
     /** Never opened: {@link Wire#read} is handed frames and {@link Wire#body} is a pure function. */
@@ -466,6 +496,18 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
             server.start();
         }
 
+        /** An answer with REASONING in it, which is the only shape that produces a thought row. */
+        private static final String ONE_THOUGHT =
+                "data: {\"choices\":[{\"index\":0,\"delta\":"
+                        + "{\"reasoning\":\"the BOM names no version for it\"}}]}\n\n"
+                        + "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},"
+                        + "\"finish_reason\":\"stop\"}]}\n\n"
+                        + "data: [DONE]\n\n";
+
+        static Loopback thinkingAloud() throws IOException {
+            return new Loopback(200, ONE_THOUGHT, false);
+        }
+
         static Loopback answering() throws IOException {
             return new Loopback(200, ONE_ANSWER, false);
         }
@@ -502,6 +544,7 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
 
         final List<Trace.Exchange> exchanges = new ArrayList<>();
         final List<String> thoughts = new ArrayList<>();
+        final List<String> thoughtAgents = new ArrayList<>();
 
         @Override
         public synchronized void exchanged(Trace.Exchange exchange) {
@@ -509,8 +552,9 @@ class TheClientOwnsTheSocketAndEverythingOnItTest {
         }
 
         @Override
-        public synchronized void thought(String finishReason, String thinking, String content) {
+        public synchronized void thought(String agent, String finishReason, String thinking, String content) {
             thoughts.add(finishReason + " :: " + thinking + " :: " + content);
+            thoughtAgents.add(agent);
         }
 
         @Override

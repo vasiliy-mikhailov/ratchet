@@ -124,7 +124,7 @@ class AConsumerSaysWhereTheRestOfAResultWentTest {
 
         @Override public void applied(String stage, String what) { }
 
-        @Override public void thought(String finish, String thinking, String content) { }
+        @Override public void thought(String agent, String finish, String thinking, String content) { }
 
         @Override public void built(String phase, Trace.Outcome result) { }
 

@@ -135,7 +135,7 @@ class WhatAStalledStreamHadAlreadySaidTest {
         // Recording must not break the call it is recording — but it must not hide it either.
         Trace broken = new Notes() {
             @Override
-            public void thought(String f, String t, String c) {
+            public void thought(String agent, String f, String t, String c) {
                 throw new IllegalStateException("the record is unwritable");
             }
         };
@@ -258,7 +258,7 @@ class WhatAStalledStreamHadAlreadySaidTest {
          * accumulator keeps the thinking and the answer apart, so a row that dropped the third
          * column would hide exactly half of what the stalled stream had already produced.
          */
-        public void thought(String f, String t, String c) {
+        public void thought(String agent, String f, String t, String c) {
             thoughts.add(f + " :: " + t + " :: " + c);
         }
 

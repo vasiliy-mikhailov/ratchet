@@ -58,21 +58,4 @@ class AThoughtRowSaysWhichAgentThoughtItTest {
                         + "agreed with every other by matching nothing");
     }
 
-    /**
-     * THE OLD CALL STILL WORKS AND STILL LOSES THE AGENT, which is the honest cost of not breaking
-     * every implementation. It is deprecated rather than deleted so the compiler says so at the
-     * call site, instead of a record saying so months later.
-     */
-    @Test
-    @SuppressWarnings("deprecation")
-    void theThreeArgumentFormStillWritesARowAndStillCannotSayWhose(@TempDir Path dir) {
-        JsonlTrace trace = new JsonlTrace(dir.resolve("trace.jsonl"), dir.resolve("settled.jsonl"),
-                "run-2");
-
-        trace.thought("stop", "reasoning with nobody's name on it", "the answer");
-
-        assertEquals(1, trace.traceEvents("", ""), "the row is written and readable unnarrowed");
-        assertEquals(0, trace.traceEvents("", "planner"),
-                "and it belongs to no agent, which is what it always did");
-    }
 }

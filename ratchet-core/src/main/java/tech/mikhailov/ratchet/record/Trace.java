@@ -148,34 +148,23 @@ public interface Trace {
      * and an answer that ended mid-thought is indistinguishable from one that declined.
      */
     /**
-     * @deprecated because it cannot say WHO thought it, and this interface's own read side filters
-     *             by exactly that. {@link Event} carries an {@code agent}, {@link #traceEvents} and
-     *             {@link #traceFind} narrow by it, and {@code thought} is the one writer that
-     *             structurally could not supply it — so every thought row was written unattributed
-     *             and silently missed every agent-narrowed read. Measured twice: 737 in one sweep
-     *             attributed to nobody, and a consumer whose nine agents all appeared in the record
-     *             as one. Use {@link #thought(String, String, String, String)}. Overriding only
-     *             this method still works and still loses the agent, which is why the compiler says
-     *             so here rather than leaving it to be found in a record months later.
-     */
-    @Deprecated(since = "0.25.0")
-    void thought(String finishReason, String thinking, String content);
-
-    /**
-     * WHAT A GENERATION PRODUCED, AND WHICH AGENT PRODUCED IT.
+     * <p>AND WHICH AGENT PRODUCED IT, which this could not say until 0.26.0 and which is the whole
+     * reason the signature changed. {@link Event} carries an {@code agent}, {@link #traceEvents}
+     * and {@link #traceFind} narrow by it, and this was the one writer that structurally could not
+     * supply one — so every reasoning row was written unattributed and silently missed every
+     * agent-narrowed read. Not an error: an empty list, which reads exactly like an honest absence.
+     * Measured twice before it was fixed — 737 rows in one sweep attributed to nobody, and a
+     * consumer whose nine agents all appeared in the record as one.
      *
-     * <p>The agent is not decoration. One client serves every agent in a flow, so a record that
-     * cannot attribute reasoning cannot answer the question anybody actually brings to it — which
-     * of them decided this — and the read side of this interface offers a narrowing that quietly
-     * matched nothing.
-     *
-     * <p>Defaults to the three-argument form so that no existing implementation breaks, which means
-     * an implementation that overrides only that one keeps today's behaviour exactly: no worse, and
-     * no better. Override THIS to write the agent down.
+     * <p>THERE IS NO THREE-ARGUMENT FORM AND THAT IS DELIBERATE. It shipped deprecated for one
+     * version and was removed rather than kept, because a deprecated method that still compiles is
+     * a lossy path somebody is still on: an implementation overriding only it wrote unattributed
+     * rows exactly as before, and the record said nothing. A signature nobody can satisfy without
+     * naming the agent is the only version of this that cannot silently regress. Every consumer
+     * takes a one-line compile error and none of them takes a corpus that quietly stopped
+     * answering.
      */
-    default void thought(String agent, String finishReason, String thinking, String content) {
-        thought(finishReason, thinking, content);
-    }
+    void thought(String agent, String finishReason, String thinking, String content);
 
     /** A check that either passed or did not, under a named condition. The only arbiter here. */
     void built(String phase, Outcome result);
@@ -271,7 +260,7 @@ public interface Trace {
             }
 
             @Override
-            public void thought(String finishReason, String thinking, String content) {
+            public void thought(String agent, String finishReason, String thinking, String content) {
             }
 
             @Override

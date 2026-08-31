@@ -169,7 +169,7 @@ class TheReasoningIsNotDiscardedTest {
     private static final class Recorder implements Trace {
         final List<Thought> thoughts = new ArrayList<>();
 
-        public void thought(String f, String t, String c) {
+        public void thought(String agent, String f, String t, String c) {
             thoughts.add(new Thought(f, t, c));
         }
 

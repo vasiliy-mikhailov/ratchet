@@ -233,7 +233,7 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
 
         @Override public void tool(String agent, String tool, String arguments, String result) { }
 
-        @Override public void thought(String finish, String thinking, String content) { }
+        @Override public void thought(String agent, String finish, String thinking, String content) { }
 
         @Override public void built(String phase, Trace.Outcome result) { }
 

@@ -232,7 +232,7 @@ class TheVerifierHoldsTheLoopTest {
         public void tool(String a, String t, String args, String result) {
         }
 
-        public void thought(String f, String t, String c) {
+        public void thought(String agent, String f, String t, String c) {
         }
 
         public void built(String phase, Trace.Outcome r) {

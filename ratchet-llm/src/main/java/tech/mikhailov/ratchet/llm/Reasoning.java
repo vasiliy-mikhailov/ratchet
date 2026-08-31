@@ -89,15 +89,10 @@ public final class Reasoning {
     private boolean abandoned;
 
     /** A null trace is taken as {@link Trace#quiet()} here so nothing below has to ask again. */
-    public Reasoning(Trace trace) {
-        this(trace, "");
-    }
-
     /**
-     * The same, told which agent is speaking, so the row it writes can be narrowed to.
-     *
-     * <p>{@code Wire} knows this from the {@code Ask} and had it in scope the whole time; nothing
-     * was missing but the parameter to carry it.
+     * @param agent who is speaking, so the row this writes can be narrowed to them. {@code Wire}
+     *              knows it from the {@code Ask} and had it in scope the whole time; nothing was
+     *              ever missing but the parameter to carry it.
      */
     public Reasoning(Trace trace, String agent) {
         this.agent = agent == null ? "" : agent;

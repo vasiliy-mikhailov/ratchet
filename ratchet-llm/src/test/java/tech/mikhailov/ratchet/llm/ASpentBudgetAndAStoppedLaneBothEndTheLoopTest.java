@@ -337,7 +337,7 @@ class ASpentBudgetAndAStoppedLaneBothEndTheLoopTest {
         }
 
         @Override
-        public void thought(String finishReason, String thinking, String content) {
+        public void thought(String agent, String finishReason, String thinking, String content) {
         }
 
         @Override

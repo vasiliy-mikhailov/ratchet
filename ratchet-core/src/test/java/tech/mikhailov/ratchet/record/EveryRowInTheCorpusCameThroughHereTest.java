@@ -69,7 +69,8 @@ class EveryRowInTheCorpusCameThroughHereTest {
         Path file = dir.resolve("trace.jsonl");
         Trace trace = trace(dir);
 
-        trace.thought("length", "the tool returned nothing, so try the other one", "I will retry");
+        trace.thought("doer", "length", "the tool returned nothing, so try the other one",
+                "I will retry");
         trace.priced(KEY, "45", "3 files read, 2 reviews, 1 rewrite");
         trace.exchanged(new Trace.Exchange("chat", "step-doer", 3, "the prompt", "the answer",
                 "read_file", "stop", 1200, 340, 4500, ""));
@@ -105,7 +106,7 @@ class EveryRowInTheCorpusCameThroughHereTest {
         Trace trace = trace(dir);
 
         trace.progress(KEY, "step one landed");
-        trace.thought("stop", "a page of reasoning nobody is shown", "the answer");
+        trace.thought("doer", "stop", "a page of reasoning nobody is shown", "the answer");
         trace.progress(KEY, "step two landed");
 
         String log = trace.happened("", "", 80);

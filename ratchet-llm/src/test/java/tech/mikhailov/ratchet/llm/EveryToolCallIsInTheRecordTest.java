@@ -124,7 +124,7 @@ class EveryToolCallIsInTheRecordTest {
         public void applied(String s, String w) {
         }
 
-        public void thought(String f, String t, String c) {
+        public void thought(String agent, String f, String t, String c) {
         }
 
         public void built(String phase, Trace.Outcome r) {

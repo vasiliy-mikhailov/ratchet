@@ -246,17 +246,21 @@ public final class Wire implements Chat {
      * on localhost, because a unit that passes in isolation and is wired to nothing is the failure
      * this library exists to argue against.
      */
+    /**
+     * THE TEST SEAM, WHICH WRITES AN UNATTRIBUTED REASONING ROW AND IS THE ONLY THING THAT CAN.
+     *
+     * <p>Kept because forty-five call sites across eleven test classes assert on frames rather than
+     * on attribution, and rewriting them buys no guarantee. The guarantee is elsewhere and holds
+     * without this: {@link Trace#thought} cannot be called without an agent, this method is
+     * package-private so nothing outside can reach it, and the one production caller —
+     * {@link #call(Ask)} — passes {@code ask.from()}. A test that cares about the agent uses the
+     * two-argument form beside it.
+     */
     Reply read(Stream<String> body) {
         return read(body, "");
     }
 
-    /**
-     * The same, told who asked, so the reasoning row this writes can be narrowed to that agent.
-     *
-     * <p>{@code Ask} has carried {@code from} since 0.13.0 and this method simply never took it,
-     * which is the whole of why {@code thought} rows were unattributed: not a hard problem, a
-     * missing parameter, and one that only a record being READ could reveal.
-     */
+    /** The same, told who asked, which is what {@link #call(Ask)} always does. */
     Reply read(Stream<String> body, String agent) {
         BlockingQueue<Object> lines = new LinkedBlockingQueue<>();
         Thread reader = new Thread(() -> {

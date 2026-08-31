@@ -68,7 +68,7 @@ class TheRunawayIsCaughtTest {
         // directly, as through Wire the stream is already over — but the latch is what makes the
         // promise "one row per response" instead of "one row per response, if the transport agrees".
         Recorder r = new Recorder();
-        Reasoning watching = new Reasoning(r);
+        Reasoning watching = new Reasoning(r, "doer");
         String line = "Let me check each proactive trigger against the build files in turn now.\n";
         try {
             for (int i = 0; i < 40; i++) {
@@ -175,7 +175,7 @@ class TheRunawayIsCaughtTest {
         final List<String> finishes = new ArrayList<>();
         final List<String> thinking = new ArrayList<>();
 
-        public void thought(String f, String t, String c) {
+        public void thought(String agent, String f, String t, String c) {
             finishes.add(f);
             thinking.add(t);
         }

@@ -163,7 +163,7 @@ class ACycleIsSixRepeatsOfALineTheDetectorCanSeeTest {
         // record as an answer the model never gave. `thought` is a row prompt tuning replays, so an
         // invented answer there is an invented training pair.
         Recorder r = new Recorder();
-        Reasoning watching = new Reasoning(r);
+        Reasoning watching = new Reasoning(r, "doer");
 
         watching.reasoned(null);
         watching.reasoned(TRAPPED + "\n");
@@ -188,7 +188,7 @@ class ACycleIsSixRepeatsOfALineTheDetectorCanSeeTest {
         // must report what the server SAID: `length` is a truncation somebody can act on and a
         // blank is an empty nobody can diagnose, which was the state of 107 of 182 of them.
         Recorder r = new Recorder();
-        Reasoning watching = new Reasoning(r);
+        Reasoning watching = new Reasoning(r, "doer");
 
         watching.reasoned(TRAPPED + "\n");
         watching.ended(null);
@@ -221,7 +221,7 @@ class ACycleIsSixRepeatsOfALineTheDetectorCanSeeTest {
         assertTrue(throughTheWire.getMessage().contains(TRAPPED),
                 "and it still says which line trapped it: " + throughTheWire.getMessage());
 
-        Reasoning unwatched = new Reasoning(null);
+        Reasoning unwatched = new Reasoning(null, "doer");
         Reasoning.LoopDetected untraced = assertThrows(Reasoning.LoopDetected.class,
                 () -> {
                     for (int repeat = 0; repeat < 12; repeat++) {
@@ -316,7 +316,7 @@ class ACycleIsSixRepeatsOfALineTheDetectorCanSeeTest {
     private static final class Recorder implements Trace {
         final List<Thought> thoughts = new ArrayList<>();
 
-        public void thought(String f, String t, String c) {
+        public void thought(String agent, String f, String t, String c) {
             thoughts.add(new Thought(f, t, c));
         }
 
