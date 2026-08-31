@@ -188,7 +188,7 @@ class TheReasoningIsNotDiscardedTest {
         public void settled(String k, String s, String w, boolean before, boolean after) {
         }
 
-        public void failed(String k, Throwable c) {
+        public void failed(String agent, String k, Throwable c) {
         }
 
         public void progress(String k, String n) {

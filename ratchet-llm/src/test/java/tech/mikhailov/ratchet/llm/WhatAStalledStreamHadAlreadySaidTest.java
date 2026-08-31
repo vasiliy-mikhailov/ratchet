@@ -268,7 +268,7 @@ class WhatAStalledStreamHadAlreadySaidTest {
         public void tool(String a, String t, String g, String r) { }
         public void built(String p, Trace.Outcome r) { }
         public void settled(String k, String s, String w, boolean b, boolean a) { }
-        public void failed(String k, Throwable c) { }
+        public void failed(String agent, String k, Throwable c) { }
         public void priced(String k, String m, String i) { }
     }
 }

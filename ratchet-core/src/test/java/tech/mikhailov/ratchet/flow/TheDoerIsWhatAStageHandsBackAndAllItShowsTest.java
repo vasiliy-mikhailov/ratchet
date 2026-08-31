@@ -272,7 +272,7 @@ class TheDoerIsWhatAStageHandsBackAndAllItShowsTest {
         public void settled(String b, String s, String w, boolean x, boolean y) {
         }
 
-        public void failed(String b, Throwable c) {
+        public void failed(String agent, String b, Throwable c) {
         }
 
         public void priced(String b, String m, String i) {

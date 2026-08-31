@@ -74,7 +74,24 @@ public interface Trace {
      * <p>{@link #happened} stays, and stays the right call for "I have no idea what happened, show
      * me the shape of it". It is no longer the only way in, and its bound is no longer load-bearing.
      *
-     * @param stage narrows to one stage, or blank for all
+     * <p>WHAT THE STAGE NARROWING ACTUALLY REACHES TODAY, because the promise above was wider than
+     * the record. Of the ten row kinds {@link JsonlTrace} writes, exactly ONE carries a
+     * {@code stage} column — {@link #applied} — and this library never calls {@code applied}
+     * itself. So on a record ratchet wrote, the stage column is empty on every row, and narrowing
+     * to a non-blank stage returns nothing: not an error, an empty list, which reads like a stage
+     * that did nothing. The rows that carry a stage's conclusions — {@code asked}, {@code thought},
+     * {@code tool} — have no stage to narrow on, and {@code Flow} splices the node's name into a
+     * {@code progress} note's TEXT rather than into the column these read.
+     *
+     * <p>That is the same defect as the one {@code thought} had on the agent axis, one axis over
+     * and nine kinds wider, and it is recorded here rather than quietly fixed because the fix is a
+     * design decision and not a repair: a stage is something {@code Flow} knows and {@code Wire}
+     * does not, so carrying it means scoping a trace to a stage rather than adding a tenth
+     * parameter to nine methods. Until that is settled, pass blank and narrow by agent.
+     *
+     * @param stage narrows to one stage, or blank for all — but see above: only {@code applied}
+     *              rows carry a stage today, so a non-blank stage matches nothing on a record this
+     *              library wrote
      * @param agent narrows to one agent, or blank for all
      */
     default int traceEvents(String stage, String agent) {
@@ -190,7 +207,37 @@ public interface Trace {
     }
 
     /** The run did not finish. A dropped connection must not look like nothing having happened. */
-    void failed(String key, Throwable cause);
+    /**
+     * A FAILURE, AND WHO IT BELONGS TO WHEN IT BELONGS TO ANYBODY.
+     *
+     * <p>This is {@code thought} one method along, reported by the consumer who went looking for
+     * the same shape after 0.25.0 fixed the first one. {@link Event} carries an {@code agent} and
+     * {@link #traceEvents} and {@link #traceFind} narrow by it; this writer could not supply one,
+     * so every failure a consumer recorded arrived unattributed. Their busiest failure path is a
+     * retry reporting a failed attempt — nine rows in six minutes on one lane — and none of them
+     * could say whose call was being retried. With one lane that is obvious from context. With
+     * twelve it is the question.
+     *
+     * <p>ratchet never calls this itself: its own failing request goes through {@code Listening},
+     * which has the {@code Ask} and writes an exchange row already carrying {@code from}. So this
+     * method exists FOR consumers, which is why it could stay broken without any test here
+     * noticing, and why the report had to come from one.
+     *
+     * <p>NULL IS A REAL ANSWER AND IT IS NOT THE SAME AS A NAME. A failure that belongs to the run
+     * rather than to any one agent — an endpoint gone, a disk full — has no agent, and a caller
+     * bridging some other record may genuinely have no name to pass. Null or blank means exactly
+     * that, and {@link JsonlTrace} omits the column rather than writing an empty one, so a reader
+     * of the raw record can tell "nobody's" from "somebody's, unnamed".
+     *
+     * <p>THE PROJECTION CANNOT CARRY THAT DISTINCTION AND DOES NOT PRETEND TO. {@link Event#agent}
+     * is a {@code String}, and a String has nowhere to put "no answer" — so an absent column and an
+     * empty one both read back as {@code ""}. The distinction lives in the record and not in the
+     * view of it, which is worth saying rather than leaving a caller to discover that a contract
+     * they were relying on stops at the reader.
+     *
+     * @param agent whose failure it is, or null when it belongs to the run rather than to anyone
+     */
+    void failed(String agent, String key, Throwable cause);
 
     /** Where the run is up to, for anything watching while it goes. */
     void progress(String key, String note);
@@ -273,7 +320,7 @@ public interface Trace {
             }
 
             @Override
-            public void failed(String key, Throwable cause) {
+            public void failed(String agent, String key, Throwable cause) {
             }
 
             @Override

@@ -179,6 +179,11 @@ public final class JsonlTrace implements Trace, ToolWatching {
                             // to decide. Found by a mutation that could not be killed, because a
                             // branch nothing can reach cannot be made to behave differently.
                             + ("true".equals(value(row, "infra")) ? "did not run" : "ran");
+                    // A FAILURE IS EXACTLY A ONE-LINE EVENT, and this rendered none. An agent
+                    // calling happened() to find out what had gone on was never told that anything
+                    // had gone wrong, in the method that exists to tell it what had gone on.
+                    case "failed" -> "[" + (who.isEmpty() ? "run" : who) + "] FAILED: "
+                            + one(telling, kind, value(row, "cause"));
                     case "settled" -> "SETTLED " + value(row, "state") + ": "
                             + one(telling, kind, value(row, "because"));
                     default -> "";
@@ -356,6 +361,12 @@ public final class JsonlTrace implements Trace, ToolWatching {
                     + Json.read(row, "summary");
             case "settled" -> Json.read(row, "state") + ": " + Json.read(row, "because");
             case "thought" -> Json.read(row, "thinking");
+            // FAILURES WERE INVISIBLE TO NAVIGATION ENTIRELY, not merely unattributed. Without a
+            // case here whole() returned "" and scan() skips a blank, so traceEvents, traceSlice
+            // and traceFind never saw a single failed row — the one kind whose whole purpose is to
+            // be found later. The stack stays out of this line and stays in the row: this is the
+            // one-line rendering, and traceFind matches on it.
+            case "failed" -> Json.read(row, "cause");
             case "priced" -> Json.read(row, "itemisation");
             // THE CONVERSATION ITSELF, WHICH NAVIGATION COULD NOT SEE. happened omits exchange
             // rows deliberately: it is a curated one-line-per-event summary and a re-rendered
@@ -493,7 +504,7 @@ public final class JsonlTrace implements Trace, ToolWatching {
     }
 
     @Override
-    public void failed(String runKey, Throwable cause) {
+    public void failed(String agent, String runKey, Throwable cause) {
         String what = cause.getClass().getSimpleName() + ": " + cause.getMessage();
         StringBuilder where = new StringBuilder(what);
         for (StackTraceElement s : cause.getStackTrace()) {
@@ -502,7 +513,15 @@ public final class JsonlTrace implements Trace, ToolWatching {
         if (cause.getCause() != null) {
             where.append("\ncaused by ").append(cause.getCause());
         }
-        write("failed", of("cause", what, "stack", where.toString()));
+        Map<String, String> fields = of("agent", agent, "cause", what, "stack", where.toString());
+        if (agent == null || agent.isBlank()) {
+            // ABSENT RATHER THAN EMPTY. A blank column is a nameless agent standing in the record
+            // beside the named ones; no column at all is a caller saying it could not tell you.
+            // of() turns null into "" for every field, which is right for a note and wrong for
+            // this one, so the removal is here rather than there.
+            fields.remove("agent");
+        }
+        write("failed", fields);
         Settlement.note(settlements, runKey, "infra", what);
     }
 

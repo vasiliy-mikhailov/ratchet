@@ -159,7 +159,7 @@ class AnEmptyAnswerThatRanOutOfRoomTest {
         public void thought(String agent, String f, String t, String c) { }
         public void built(String p, Trace.Outcome r) { }
         public void settled(String k, String s, String w, boolean b, boolean a) { }
-        public void failed(String k, Throwable c) { }
+        public void failed(String agent, String k, Throwable c) { }
         public void priced(String k, String m, String i) { }
     };
 }

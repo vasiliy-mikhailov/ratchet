@@ -169,7 +169,7 @@ class EveryRowInTheCorpusCameThroughHereTest {
     void aRunThatDiedSaysSoWhereTheLauncherIsLooking(@TempDir Path dir) {
         Trace trace = trace(dir);
 
-        trace.failed(KEY, new IllegalStateException("agent loop died",
+        trace.failed("doer", KEY, new IllegalStateException("agent loop died",
                 new java.net.SocketTimeoutException("timed out reading the response")));
 
         Map<String, String> row = Json.row(rows(dir.resolve("trace.jsonl")).get(0));
@@ -191,7 +191,7 @@ class EveryRowInTheCorpusCameThroughHereTest {
     void anExceptionWithNothingUnderItDoesNotInventACause(@TempDir Path dir) {
         Trace trace = trace(dir);
 
-        trace.failed(KEY, new IllegalStateException("the workspace vanished"));
+        trace.failed(null, KEY, new IllegalStateException("the workspace vanished"));
 
         String stack = Json.row(rows(dir.resolve("trace.jsonl")).get(0)).get("stack");
         assertFalse(stack.contains("caused by"),

@@ -512,7 +512,7 @@ class TheRowIsTheOnlyCopyOfWhatWasSaidTest {
         }
 
         @Override
-        public void failed(String key, Throwable cause) {
+        public void failed(String agent, String key, Throwable cause) {
         }
 
         @Override

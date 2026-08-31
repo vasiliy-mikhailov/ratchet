@@ -38,7 +38,7 @@ is everything that knows an endpoint exists. Take the first without compiling ag
 <dependency>
   <groupId>tech.mikhailov.ratchet</groupId>
   <artifactId>ratchet-core</artifactId>
-  <version>0.27.0</version>
+  <version>0.28.0</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ moving target is how the thing this replaced became unusable.
 git clone https://github.com/vasiliy-mikhailov/ratchet.git && cd ratchet
 ./install.sh                              # the newest tag, into ~/.m2
 ./install.sh v0.5.0                       # a specific one
-./install.sh v0.27.0 -r ~/.m2-fitness/repository   # into a repository another build reads
+./install.sh v0.28.0 -r ~/.m2-fitness/repository   # into a repository another build reads
 ```
 
 `-r` becomes `-Dmaven.repo.local`, so it wants the **repository** directory rather than the `.m2`
@@ -268,6 +268,21 @@ unattributed rows exactly as before and the record said nothing. **Every consume
 compile error; none of them takes a corpus that quietly stopped answering.** The end-to-end test
 runs over a real loopback socket, because the half that was broken was the LINK between
 `answer(ask)` and the row, and a link is only visible from both ends.
+
+**A failure says whose it is, and can be found at all, from 0.28.0.** `Trace.failed` is `thought`
+one method along — no agent, while `Event` carries one and every reader narrows by it. Worse:
+`failed` was named by *neither* renderer in `JsonlTrace`, and both skip a blank line, so no failure
+had ever appeared in `traceEvents`, `traceSlice`, `traceFind` or `happened`. An agent calling
+`happened()` to learn what had gone on was never told anything had gone wrong. Null means the
+failure belongs to the run rather than to anyone, and the column is omitted rather than blanked —
+though `Event.agent()` is a `String`, so the view flattens absent and empty alike, which is stated
+rather than left to be discovered.
+
+**Known and not fixed: the `stage` narrowing.** Of ten row kinds, one carries a `stage` column, and
+ratchet never calls that writer — so on a record ratchet wrote, narrowing to a stage matches
+nothing. Same defect as `thought`'s, one axis over and nine kinds wider. It is documented rather
+than repaired because the fix is a design decision: a stage is something `Flow` knows and `Wire`
+does not, so it means scoping a trace, not adding a tenth parameter to nine methods.
 
 **`bash` stops dropping its own output, from 0.27.0.** `Retain.MOST` bounds what the model is
 shown and `Shell.KEEPING` bounds the heap — but everything between them, up to a million characters

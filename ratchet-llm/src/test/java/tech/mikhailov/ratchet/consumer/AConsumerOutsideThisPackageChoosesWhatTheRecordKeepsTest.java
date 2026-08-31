@@ -240,7 +240,7 @@ class AConsumerOutsideThisPackageChoosesWhatTheRecordKeepsTest {
         @Override public void settled(String key, String state, String because, boolean before,
                                       boolean after) { }
 
-        @Override public void failed(String key, Throwable cause) { }
+        @Override public void failed(String agent, String key, Throwable cause) { }
 
         @Override public void progress(String key, String note) { }
 
